@@ -21,26 +21,11 @@ export type RecoveryRequestStatus =
   | 'cancelled'
   | 'expired';
 
+import type { AuditEventType } from './audit';
+
 export type RecoveryDecision = 'approve' | 'decline';
 
-export type AuditEventType =
-  | 'vault_created'
-  | 'payload_updated'
-  | 'checkin_recorded'
-  | 'state_transitioned'
-  | 'nominee_added'
-  | 'nominee_updated'
-  | 'nominee_revoked'
-  | 'invite_sent'
-  | 'invite_accepted'
-  | 'recovery_started'
-  | 'nominee_approved'
-  | 'nominee_declined'
-  | 'recovery_cooling_off'
-  | 'recovery_ready'
-  | 'recovery_cancelled'
-  | 'recovery_expired'
-  | 'client_reported_recovery_complete';
+export type { AuditEventType };
 
 export interface ProfileRecord {
   user_id: string;
