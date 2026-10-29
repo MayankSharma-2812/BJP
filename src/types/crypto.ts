@@ -87,6 +87,7 @@ export const AssetEntrySchema = z.object({
 });
 
 export type AssetEntry = z.infer<typeof AssetEntrySchema>;
+export type VaultAsset = AssetEntry;
 
 export const VaultPayloadSchema = z.object({
   schemaVersion: z.literal(1),
