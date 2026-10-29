@@ -7,6 +7,7 @@
 - **Mayank Sharma** — Core Security, Cryptography Engine, State Machine & Backend APIs (Workstream A)  
 - **Shyam** — Product Design, Data Foundation, UI Flows & Accessibility Hardening (Workstream B)  
 **Repository:** `MayankSharma-2812/BJP`  
+**Live Production URL:** [https://bjp-tau.vercel.app](https://bjp-tau.vercel.app)  
 **Target Platform:** Web (Node.js 22+, Next.js 16 Turbopack, Modern Web Crypto API)  
 
 ---
