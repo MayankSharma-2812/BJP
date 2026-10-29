@@ -85,7 +85,7 @@ export async function createVault(
 ): Promise<VaultRecord> {
   const now = new Date();
   const nextCheckin = new Date(now.getTime() + data.checkinIntervalSeconds * 1000);
-  const vaultId = crypto.randomUUID();
+  const vaultId = data.id || crypto.randomUUID();
 
   const record: VaultRecord = {
     id: vaultId,

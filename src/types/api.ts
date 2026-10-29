@@ -135,6 +135,7 @@ export type AuditQueryResponse = z.infer<typeof AuditQueryResponseSchema>;
 
 // POST /api/vaults
 export interface CreateVaultRequest {
+  id?: string;
   schemaVersion: number;
   cryptoVersion: number;
   payloadCiphertext: string;
