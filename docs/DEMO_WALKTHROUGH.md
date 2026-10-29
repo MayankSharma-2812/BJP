@@ -1,5 +1,8 @@
 # Last Mile — Live Technical Demonstration & Rehearsal Runbook
 
+> **Live Production Deployment:** [https://bjp-tau.vercel.app](https://bjp-tau.vercel.app)  
+> **Local Development URL:** `http://localhost:3000`
+
 This document is the step-by-step rehearsal and live demonstration runbook for the **Last Mile: Zero-Knowledge Family Continuity Vault**. It proves our security guarantees, 2-of-3 Shamir recovery, server-gated state transitions, and tamper-evident audit trail under live conditions.
 
 ---
