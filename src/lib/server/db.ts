@@ -142,18 +142,12 @@ export async function createVault(
     }
   } else {
     mockStore.vaults.set(vaultId, record);
-    mockStore.auditEvents.push({
-      id: crypto.randomUUID(),
-      vault_id: vaultId,
-      sequence: 1,
-      event_type: 'vault_created',
-      actor_user_id: ownerId,
-      server_time: now.toISOString(),
-      event_metadata: { schemaVersion: data.schemaVersion, cryptoVersion: data.cryptoVersion },
-      previous_hash: '0000000000000000000000000000000000000000000000000000000000000000',
-      event_hash: 'genesis-hash',
-      request_id: null,
-    });
+    await appendAuditEventDb(
+      vaultId,
+      'vault_created',
+      { schemaVersion: data.schemaVersion, cryptoVersion: data.cryptoVersion },
+      ownerId
+    );
   }
 
   return record;
@@ -536,11 +530,16 @@ export async function appendAuditEventDb(
     await client.from('audit_events').insert(record);
     return record;
   } else {
+    const safeActor = actorUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(actorUserId)
+      ? actorUserId
+      : null;
+
     const vaultEvents = mockStore.auditEvents.filter((e) => e.vault_id === vaultId);
     vaultEvents.sort((a, b) => a.sequence - b.sequence);
 
-    const prevHash = vaultEvents.length > 0
-      ? vaultEvents[vaultEvents.length - 1].event_hash
+    const lastHash = vaultEvents.length > 0 ? vaultEvents[vaultEvents.length - 1].event_hash : null;
+    const prevHash = lastHash && /^[a-f0-9]{64}$/i.test(lastHash)
+      ? lastHash
       : GENESIS_PREVIOUS_HASH;
     const nextSeq = vaultEvents.length > 0
       ? vaultEvents[vaultEvents.length - 1].sequence + 1
@@ -550,7 +549,7 @@ export async function appendAuditEventDb(
       vaultId,
       sequence: nextSeq,
       eventType,
-      actorUserId,
+      actorUserId: safeActor,
       metadata,
       previousHash: prevHash,
       requestId,

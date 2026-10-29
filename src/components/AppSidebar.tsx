@@ -16,7 +16,7 @@ import {
   LifeBuoy,
 } from 'lucide-react';
 
-const NAV_ITEMS = [
+export const NAV_ITEMS = [
   { label: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
   { label: 'Assets', href: '/dashboard/assets', icon: FolderLock },
   { label: 'Nominees', href: '/dashboard/nominees', icon: Users },
@@ -30,10 +30,16 @@ export function AppSidebar() {
   const pathname = usePathname();
 
   return (
-    <aside className="w-64 flex-shrink-0 border-r border-[#E8E2D5] bg-[#FAF7F2] flex flex-col justify-between p-4 h-screen sticky top-0">
+    <aside
+      aria-label="Application sidebar navigation"
+      className="hidden md:flex w-64 flex-shrink-0 border-r border-[#E8E2D5] bg-[#FAF7F2] flex-col justify-between p-4 h-screen sticky top-0"
+    >
       <div>
         {/* Brand */}
-        <Link href="/dashboard" className="flex items-center gap-2.5 px-3 py-2 mb-6 group">
+        <Link
+          href="/dashboard"
+          className="flex items-center gap-2.5 px-3 py-2 mb-6 group rounded-lg focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
+        >
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1C1D1F] text-white">
             <Shield className="h-4 w-4" />
           </div>
@@ -43,7 +49,7 @@ export function AppSidebar() {
         </Link>
 
         {/* Navigation */}
-        <nav className="space-y-1">
+        <nav className="space-y-1" aria-label="Sidebar main links">
           {NAV_ITEMS.map((item) => {
             const Icon = item.icon;
             const isActive = pathname === item.href;
@@ -51,7 +57,7 @@ export function AppSidebar() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition ${
+                className={`flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none ${
                   isActive
                     ? 'bg-[#EFE8DC] text-[#181816] font-semibold shadow-xs'
                     : 'text-[#6B665D] hover:bg-[#F4EFE6] hover:text-[#181816]'
