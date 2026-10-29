@@ -141,7 +141,10 @@ export default function RecoveryPage() {
 
   return (
     <div className="min-h-screen bg-[#FAF7F2] text-[#181816] flex flex-col justify-center items-center px-4 py-12">
-      <Link href="/" className="flex items-center gap-2.5 mb-8 group">
+      <Link
+        href="/"
+        className="flex items-center gap-2.5 mb-8 group rounded-lg focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
+      >
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1C1D1F] text-white shadow-sm">
           <Shield className="h-5 w-5" />
         </div>
@@ -174,34 +177,48 @@ export default function RecoveryPage() {
           <div className="space-y-4">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-[#181816] mb-1">
+                <label htmlFor="card-a-input" className="block text-xs font-semibold text-[#181816] mb-1">
                   Recovery Card A
                 </label>
                 <textarea
+                  id="card-a-input"
                   rows={6}
                   placeholder="Paste JSON for Recovery Card #1 or #2..."
                   value={card1}
-                  onChange={(e) => setCard1(e.target.value)}
-                  className="w-full p-2.5 text-[11px] font-mono rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                  aria-invalid={!!error}
+                  onChange={(e) => {
+                    setCard1(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  className="w-full p-2.5 text-[11px] font-mono rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#181816] mb-1">
+                <label htmlFor="card-b-input" className="block text-xs font-semibold text-[#181816] mb-1">
                   Recovery Card B
                 </label>
                 <textarea
+                  id="card-b-input"
                   rows={6}
                   placeholder="Paste JSON for Recovery Card #2 or #3..."
                   value={card2}
-                  onChange={(e) => setCard2(e.target.value)}
-                  className="w-full p-2.5 text-[11px] font-mono rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                  aria-invalid={!!error}
+                  onChange={(e) => {
+                    setCard2(e.target.value);
+                    if (error) setError(null);
+                  }}
+                  className="w-full p-2.5 text-[11px] font-mono rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F]"
                 />
               </div>
             </div>
 
             {error && (
-              <div className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-xl flex items-center gap-2">
+              <div
+                role="alert"
+                aria-live="assertive"
+                className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-xl flex items-center gap-2"
+              >
                 <AlertTriangle className="h-4 w-4 flex-shrink-0" />
                 <span>{error}</span>
               </div>
@@ -211,7 +228,7 @@ export default function RecoveryPage() {
               type="button"
               disabled={loading}
               onClick={handleCombineAndDecrypt}
-              className="w-full py-3.5 bg-[#1C1D1F] hover:bg-[#2C2D2F] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition disabled:opacity-50"
+              className="w-full py-3.5 bg-[#1C1D1F] hover:bg-[#2C2D2F] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 shadow-sm transition disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
             >
               <KeyRound className="h-4 w-4" />
               <span>{loading ? 'Reconstructing DEK Locally...' : 'Combine Shares & Unlock Vault'}</span>
@@ -283,7 +300,7 @@ export default function RecoveryPage() {
               <button
                 type="button"
                 onClick={() => setDecryptedPayload(null)}
-                className="px-3 py-1.5 border border-[#D5CEBF] hover:bg-[#F2ECE1] rounded-lg font-semibold text-[#181816]"
+                className="px-3 py-1.5 border border-[#D5CEBF] hover:bg-[#F2ECE1] rounded-lg font-semibold text-[#181816] transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
               >
                 Lock Session
               </button>

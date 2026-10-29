@@ -21,6 +21,7 @@ import {
   Users,
   Copy,
   Check,
+  AlertCircle,
 } from 'lucide-react';
 import {
   generateDek,
@@ -58,12 +59,22 @@ export default function NewVaultWizardPage() {
   const [email, setEmail] = useState('shyam@example.com');
   const [phone, setPhone] = useState('+91 98765 43210');
   const [passphrase, setPassphrase] = useState('demo-vault-passphrase-2026');
+  const [step1Errors, setStep1Errors] = useState<{
+    fullName?: string;
+    email?: string;
+    passphrase?: string;
+  }>({});
 
   // Step 2: Assets
   const [assetCategory, setAssetCategory] = useState<'bank_account' | 'insurance_policy' | 'investment' | 'document'>('bank_account');
   const [instName, setInstName] = useState('HDFC Bank');
   const [accountRef, setAccountRef] = useState('•••• •••• 4321');
   const [assetNotes, setAssetNotes] = useState('Savings account - Locker in Jaipur branch');
+  const [assetErrors, setAssetErrors] = useState<{
+    instName?: string;
+    accountRef?: string;
+    general?: string;
+  }>({});
   const [assets, setAssets] = useState<AssetEntry[]>([
     {
       id: 'ast-1',
@@ -114,8 +125,42 @@ export default function NewVaultWizardPage() {
   const [generatedCards, setGeneratedCards] = useState<string[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
+  const validateStep1 = () => {
+    const errors: { fullName?: string; email?: string; passphrase?: string } = {};
+    if (!fullName.trim()) {
+      errors.fullName = 'Full name is required.';
+    }
+    if (!email.trim() || !email.includes('@')) {
+      errors.email = 'A valid email address is required.';
+    }
+    if (!passphrase.trim() || passphrase.length < 8) {
+      errors.passphrase = 'Master passphrase must be at least 8 characters.';
+    }
+    setStep1Errors(errors);
+    return Object.keys(errors).length === 0;
+  };
+
+  const handleStep1Continue = () => {
+    if (validateStep1()) {
+      setStep(2);
+    }
+  };
+
   const handleAddAsset = () => {
-    if (!instName.trim() || !accountRef.trim()) return;
+    const errors: { instName?: string; accountRef?: string } = {};
+    if (!instName.trim()) {
+      errors.instName = 'Institution name is required.';
+    }
+    if (!accountRef.trim()) {
+      errors.accountRef = 'Account or policy reference is required.';
+    }
+
+    if (Object.keys(errors).length > 0) {
+      setAssetErrors(errors);
+      return;
+    }
+
+    setAssetErrors({});
     setAssets([
       ...assets,
       {
@@ -133,6 +178,15 @@ export default function NewVaultWizardPage() {
 
   const handleRemoveAsset = (id: string) => {
     setAssets(assets.filter((a) => a.id !== id));
+  };
+
+  const handleStep2Continue = () => {
+    if (assets.length === 0) {
+      setAssetErrors({ general: 'At least one asset is required before continuing.' });
+      return;
+    }
+    setAssetErrors({});
+    setStep(3);
   };
 
   const handleCreateVault = async () => {
@@ -233,7 +287,10 @@ export default function NewVaultWizardPage() {
   return (
     <div className="min-h-screen bg-[#FAF7F2] text-[#181816] flex flex-col">
       <header className="h-16 border-b border-[#E8E2D5] bg-[#FAF7F2] px-6 flex items-center justify-between sticky top-0 z-30">
-        <Link href="/" className="flex items-center gap-2.5 group">
+        <Link
+          href="/"
+          className="flex items-center gap-2.5 group rounded-lg focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
+        >
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1C1D1F] text-white">
             <Shield className="h-4 w-4" />
           </div>
@@ -287,48 +344,94 @@ export default function NewVaultWizardPage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-semibold text-[#181816] mb-1">Full Name</label>
+                <label htmlFor="fullname-input" className="block text-xs font-semibold text-[#181816] mb-1">
+                  Full Name
+                </label>
                 <input
+                  id="fullname-input"
                   type="text"
                   value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                  aria-invalid={!!step1Errors.fullName}
+                  aria-describedby={step1Errors.fullName ? 'fullname-error' : undefined}
+                  onChange={(e) => {
+                    setFullName(e.target.value);
+                    if (step1Errors.fullName) setStep1Errors({ ...step1Errors, fullName: undefined });
+                  }}
+                  className={`w-full px-3.5 py-2 text-sm rounded-lg border bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F] ${
+                    step1Errors.fullName ? 'border-red-500' : 'border-[#E8E2D5]'
+                  }`}
                 />
+                {step1Errors.fullName && (
+                  <p id="fullname-error" role="alert" className="text-[11px] text-red-600 mt-1">
+                    {step1Errors.fullName}
+                  </p>
+                )}
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#181816] mb-1">Email Address</label>
+                <label htmlFor="email-input" className="block text-xs font-semibold text-[#181816] mb-1">
+                  Email Address
+                </label>
                 <input
+                  id="email-input"
                   type="email"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                  aria-invalid={!!step1Errors.email}
+                  aria-describedby={step1Errors.email ? 'email-error' : undefined}
+                  onChange={(e) => {
+                    setEmail(e.target.value);
+                    if (step1Errors.email) setStep1Errors({ ...step1Errors, email: undefined });
+                  }}
+                  className={`w-full px-3.5 py-2 text-sm rounded-lg border bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F] ${
+                    step1Errors.email ? 'border-red-500' : 'border-[#E8E2D5]'
+                  }`}
                 />
+                {step1Errors.email && (
+                  <p id="email-error" role="alert" className="text-[11px] text-red-600 mt-1">
+                    {step1Errors.email}
+                  </p>
+                )}
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#181816] mb-1">Phone Number</label>
+                <label htmlFor="phone-input" className="block text-xs font-semibold text-[#181816] mb-1">
+                  Phone Number
+                </label>
                 <input
+                  id="phone-input"
                   type="text"
                   value={phone}
                   onChange={(e) => setPhone(e.target.value)}
-                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                  className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F]"
                 />
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-[#181816] mb-1">
+                <label htmlFor="passphrase-input" className="block text-xs font-semibold text-[#181816] mb-1">
                   Master Vault Passphrase
                 </label>
                 <div className="relative">
                   <input
+                    id="passphrase-input"
                     type="password"
                     value={passphrase}
-                    onChange={(e) => setPassphrase(e.target.value)}
-                    className="w-full px-3.5 py-2 text-sm rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                    aria-invalid={!!step1Errors.passphrase}
+                    aria-describedby={step1Errors.passphrase ? 'passphrase-error' : undefined}
+                    onChange={(e) => {
+                      setPassphrase(e.target.value);
+                      if (step1Errors.passphrase) setStep1Errors({ ...step1Errors, passphrase: undefined });
+                    }}
+                    className={`w-full px-3.5 py-2 text-sm rounded-lg border bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F] ${
+                      step1Errors.passphrase ? 'border-red-500' : 'border-[#E8E2D5]'
+                    }`}
                   />
                   <Lock className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-[#8C877E]" />
                 </div>
+                {step1Errors.passphrase && (
+                  <p id="passphrase-error" role="alert" className="text-[11px] text-red-600 mt-1">
+                    {step1Errors.passphrase}
+                  </p>
+                )}
               </div>
             </div>
 
@@ -339,8 +442,8 @@ export default function NewVaultWizardPage() {
             <div className="flex justify-end pt-4 border-t border-[#E8E2D5]">
               <button
                 type="button"
-                onClick={() => setStep(2)}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#2C2D2F] transition"
+                onClick={handleStep1Continue}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#2C2D2F] transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
               >
                 <span>Continue</span>
                 <ArrowRight className="h-4 w-4" />
@@ -373,7 +476,7 @@ export default function NewVaultWizardPage() {
                     key={c.key}
                     type="button"
                     onClick={() => setAssetCategory(c.key)}
-                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition ${
+                    className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none ${
                       isSelected
                         ? 'bg-[#1C1D1F] text-white shadow-xs'
                         : 'bg-[#F2ECE1] text-[#6B665D] hover:bg-[#EAE2D5]'
@@ -389,49 +492,87 @@ export default function NewVaultWizardPage() {
             <div className="bg-[#FAF7F2] p-4 rounded-xl border border-[#E8E2D5] space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[#6B665D] mb-1">Institution</label>
+                  <label htmlFor="inst-name-input" className="block text-xs font-medium text-[#6B665D] mb-1">
+                    Institution
+                  </label>
                   <input
+                    id="inst-name-input"
                     type="text"
                     placeholder="e.g. HDFC Bank, LIC, SBI"
                     value={instName}
-                    onChange={(e) => setInstName(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                    aria-invalid={!!assetErrors.instName}
+                    aria-describedby={assetErrors.instName ? 'inst-error' : undefined}
+                    onChange={(e) => {
+                      setInstName(e.target.value);
+                      if (assetErrors.instName) setAssetErrors({ ...assetErrors, instName: undefined });
+                    }}
+                    className={`w-full px-3 py-1.5 text-xs rounded-lg border bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F] ${
+                      assetErrors.instName ? 'border-red-500' : 'border-[#E8E2D5]'
+                    }`}
                   />
+                  {assetErrors.instName && (
+                    <p id="inst-error" role="alert" className="text-[11px] text-red-600 mt-0.5">
+                      {assetErrors.instName}
+                    </p>
+                  )}
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#6B665D] mb-1">Reference / Policy</label>
+                  <label htmlFor="account-ref-input" className="block text-xs font-medium text-[#6B665D] mb-1">
+                    Reference / Policy
+                  </label>
                   <input
+                    id="account-ref-input"
                     type="text"
                     placeholder="e.g. •••• •••• 4321"
                     value={accountRef}
-                    onChange={(e) => setAccountRef(e.target.value)}
-                    className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                    aria-invalid={!!assetErrors.accountRef}
+                    aria-describedby={assetErrors.accountRef ? 'account-ref-error' : undefined}
+                    onChange={(e) => {
+                      setAccountRef(e.target.value);
+                      if (assetErrors.accountRef) setAssetErrors({ ...assetErrors, accountRef: undefined });
+                    }}
+                    className={`w-full px-3 py-1.5 text-xs rounded-lg border bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F] ${
+                      assetErrors.accountRef ? 'border-red-500' : 'border-[#E8E2D5]'
+                    }`}
                   />
+                  {assetErrors.accountRef && (
+                    <p id="account-ref-error" role="alert" className="text-[11px] text-red-600 mt-0.5">
+                      {assetErrors.accountRef}
+                    </p>
+                  )}
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-[#6B665D] mb-1">
+                <label htmlFor="asset-notes-input" className="block text-xs font-medium text-[#6B665D] mb-1">
                   How to Claim / Location of Documents
                 </label>
                 <input
+                  id="asset-notes-input"
                   type="text"
                   placeholder="e.g. Safe locker #4 in Jaipur; original bond in blue file"
                   value={assetNotes}
                   onChange={(e) => setAssetNotes(e.target.value)}
-                  className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
+                  className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus-visible:ring-2 focus-visible:ring-[#1C1D1F]"
                 />
               </div>
 
               <button
                 type="button"
                 onClick={handleAddAsset}
-                className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#1C1D1F] text-white text-xs font-semibold rounded-lg hover:bg-[#2C2D2F] transition"
+                className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#1C1D1F] text-white text-xs font-semibold rounded-lg hover:bg-[#2C2D2F] transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
               >
                 <Plus className="h-3.5 w-3.5" />
                 <span>Add Asset</span>
               </button>
             </div>
+
+            {assetErrors.general && (
+              <div role="alert" className="p-3 bg-red-50 border border-red-200 text-red-800 text-xs rounded-xl flex items-center gap-2">
+                <AlertCircle className="h-4 w-4 shrink-0" />
+                <span>{assetErrors.general}</span>
+              </div>
+            )}
 
             <div className="space-y-2">
               <p className="text-xs font-bold text-[#181816]">Configured Inventory ({assets.length})</p>
@@ -447,8 +588,9 @@ export default function NewVaultWizardPage() {
                   </div>
                   <button
                     type="button"
+                    aria-label={`Remove asset ${item.institution}`}
                     onClick={() => handleRemoveAsset(item.id)}
-                    className="text-[#8C877E] hover:text-red-700 p-1"
+                    className="text-[#8C877E] hover:text-red-700 p-1 rounded-md focus-visible:ring-2 focus-visible:ring-red-600 focus-visible:outline-none"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
@@ -460,15 +602,15 @@ export default function NewVaultWizardPage() {
               <button
                 type="button"
                 onClick={() => setStep(1)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-[#6B665D] hover:bg-[#F2ECE1] rounded-lg transition"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-[#6B665D] hover:bg-[#F2ECE1] rounded-lg transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
                 <span>Back</span>
               </button>
               <button
                 type="button"
-                onClick={() => setStep(3)}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#2C2D2F] transition"
+                onClick={handleStep2Continue}
+                className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#2C2D2F] transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
               >
                 <span>Continue</span>
                 <ArrowRight className="h-4 w-4" />
@@ -519,7 +661,7 @@ export default function NewVaultWizardPage() {
               <button
                 type="button"
                 onClick={() => setStep(2)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-[#6B665D] hover:bg-[#F2ECE1] rounded-lg transition"
+                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-[#6B665D] hover:bg-[#F2ECE1] rounded-lg transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
               >
                 <ArrowLeft className="h-3.5 w-3.5" />
                 <span>Back</span>
@@ -527,7 +669,7 @@ export default function NewVaultWizardPage() {
               <button
                 type="button"
                 onClick={() => setStep(4)}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#2C2D2F] transition"
+                className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-6 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-[#2C2D2F] transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
               >
                 <span>Continue</span>
                 <ArrowRight className="h-4 w-4" />
@@ -592,7 +734,7 @@ export default function NewVaultWizardPage() {
                   <button
                     type="button"
                     onClick={() => setStep(3)}
-                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-[#6B665D] hover:bg-[#F2ECE1] rounded-lg transition"
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-[#6B665D] hover:bg-[#F2ECE1] rounded-lg transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
                   >
                     <ArrowLeft className="h-3.5 w-3.5" />
                     <span>Back</span>
@@ -601,7 +743,7 @@ export default function NewVaultWizardPage() {
                     type="button"
                     disabled={isSubmitting}
                     onClick={handleCreateVault}
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-8 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#2C2D2F] transition disabled:opacity-50"
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-8 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#2C2D2F] transition disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
                   >
                     <span>{isSubmitting ? 'Encrypting & Splitting Keys...' : 'Generate Keys & Create Vault'}</span>
                     <ArrowRight className="h-4 w-4" />
@@ -630,7 +772,8 @@ export default function NewVaultWizardPage() {
                         <button
                           type="button"
                           onClick={() => copyCard(cardJson, idx)}
-                          className="px-2.5 py-1 text-xs border border-[#D5CEBF] hover:bg-[#F2ECE1] rounded-lg flex items-center gap-1 text-[#181816] font-semibold"
+                          aria-label={`Copy JSON for Recovery Card #${idx + 1}`}
+                          className="px-2.5 py-1 text-xs border border-[#D5CEBF] hover:bg-[#F2ECE1] rounded-lg flex items-center gap-1 text-[#181816] font-semibold transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
                         >
                           {copiedIndex === idx ? (
                             <>
@@ -656,7 +799,7 @@ export default function NewVaultWizardPage() {
                   <button
                     type="button"
                     onClick={() => router.push('/dashboard')}
-                    className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-8 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#2C2D2F] transition"
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-8 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#2C2D2F] transition focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
                   >
                     <span>Proceed to Dashboard</span>
                     <ArrowRight className="h-4 w-4" />

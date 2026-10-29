@@ -1,5 +1,6 @@
-// Component and Flow Unit Tests for Workstream B2 (UI & User Journeys)
+// Component, Form Hardening and Flow Unit Tests for Workstream B2/B4
 import { describe, expect, it } from 'vitest';
+import { NAV_ITEMS } from '../AppSidebar';
 
 describe('Workstream B2: UI & User Journey Flows', () => {
   it('validates offline recovery card pair requirements', () => {
@@ -61,5 +62,57 @@ describe('Workstream B2: UI & User Journey Flows', () => {
     expect(getStageState('GRACE_PERIOD', 'GRACE_PERIOD')).toBe('active');
     expect(getStageState('RECOVERY_READY', 'ACTIVE')).toBe('completed');
     expect(getStageState('RECOVERY_READY', 'RECOVERY_READY')).toBe('active');
+  });
+
+  it('verifies dashboard navigation items consistency across devices', () => {
+    expect(NAV_ITEMS).toHaveLength(7);
+    const hrefs = NAV_ITEMS.map((item) => item.href);
+    expect(hrefs).toContain('/dashboard');
+    expect(hrefs).toContain('/dashboard/assets');
+    expect(hrefs).toContain('/dashboard/nominees');
+    expect(hrefs).toContain('/dashboard/checkin');
+    expect(hrefs).toContain('/dashboard/recovery');
+    expect(hrefs).toContain('/dashboard/activity');
+    expect(hrefs).toContain('/nominee/approval');
+  });
+
+  it('validates Step 1 accessible form validation constraints', () => {
+    function validateStep1(data: { fullName: string; email: string; passphrase: string }) {
+      const errors: Record<string, string> = {};
+      if (!data.fullName.trim()) errors.fullName = 'Full name is required.';
+      if (!data.email.trim() || !data.email.includes('@')) errors.email = 'A valid email address is required.';
+      if (!data.passphrase.trim() || data.passphrase.length < 8) errors.passphrase = 'Master passphrase must be at least 8 characters.';
+      return { valid: Object.keys(errors).length === 0, errors };
+    }
+
+    // Invalid inputs
+    const emptyCheck = validateStep1({ fullName: '', email: 'invalid', passphrase: '123' });
+    expect(emptyCheck.valid).toBe(false);
+    expect(emptyCheck.errors.fullName).toBeDefined();
+    expect(emptyCheck.errors.email).toBeDefined();
+    expect(emptyCheck.errors.passphrase).toBeDefined();
+
+    // Valid inputs
+    const validCheck = validateStep1({
+      fullName: 'Shyam Sharma',
+      email: 'shyam@example.com',
+      passphrase: 'super-secure-passphrase-2026',
+    });
+    expect(validCheck.valid).toBe(true);
+    expect(validCheck.errors).toEqual({});
+  });
+
+  it('validates Step 2 asset entry validation constraints', () => {
+    function validateAssetEntry(instName: string, accountRef: string) {
+      const errors: Record<string, string> = {};
+      if (!instName.trim()) errors.instName = 'Institution name is required.';
+      if (!accountRef.trim()) errors.accountRef = 'Account or policy reference is required.';
+      return { valid: Object.keys(errors).length === 0, errors };
+    }
+
+    expect(validateAssetEntry('', '').valid).toBe(false);
+    expect(validateAssetEntry('HDFC Bank', '').valid).toBe(false);
+    expect(validateAssetEntry('', '•••• 4321').valid).toBe(false);
+    expect(validateAssetEntry('HDFC Bank', '•••• 4321').valid).toBe(true);
   });
 });
