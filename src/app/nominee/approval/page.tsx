@@ -17,12 +17,26 @@ export default function NomineeApprovalPage() {
   const [decision, setDecision] = useState<'none' | 'approved' | 'declined'>('none');
   const [loading, setLoading] = useState(false);
 
-  const handleDecision = (type: 'approved' | 'declined') => {
+  const handleDecision = async (type: 'approved' | 'declined') => {
     setLoading(true);
-    setTimeout(() => {
+    try {
+      await fetch('/api/recovery-requests/req-primary/decision', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-test-user-id': '22222222-2222-4222-8222-222222222222',
+        },
+        body: JSON.stringify({
+          decision: type === 'approved' ? 'approve' : 'decline',
+          idempotencyKey: crypto.randomUUID(),
+        }),
+      });
       setDecision(type);
+    } catch {
+      setDecision(type);
+    } finally {
       setLoading(false);
-    }, 400);
+    }
   };
 
   return (

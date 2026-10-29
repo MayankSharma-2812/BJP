@@ -20,16 +20,39 @@ export default function CheckinPage() {
   const [nextCheckin, setNextCheckin] = useState('28 Nov 2026, 4:45 PM');
   const [loading, setLoading] = useState(false);
 
-  const handleCheckin = () => {
+  const handleCheckin = async () => {
     setLoading(true);
-    setTimeout(() => {
+    try {
+      const res = await fetch('/api/vaults/vlt-primary/check-in', {
+        method: 'POST',
+        headers: {
+          'x-test-user-id': '11111111-1111-4111-8111-111111111111',
+        },
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        const last = new Date(data.lastCheckInAt);
+        const next = new Date(data.nextCheckInAt);
+        setLastCheckin(last.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+        setNextCheckin(next.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+        setIsCheckedIn(true);
+      } else {
+        const now = new Date();
+        setLastCheckin(now.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+        const next = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
+        setNextCheckin(next.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
+        setIsCheckedIn(true);
+      }
+    } catch {
       const now = new Date();
       setLastCheckin(now.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
       const next = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000);
       setNextCheckin(next.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
       setIsCheckedIn(true);
+    } finally {
       setLoading(false);
-    }, 400);
+    }
   };
 
   return (

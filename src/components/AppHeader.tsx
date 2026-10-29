@@ -3,6 +3,7 @@
 
 'use client';
 
+import { useState } from 'react';
 import { Search, Bell, Clock, ShieldAlert } from 'lucide-react';
 import Link from 'next/link';
 
@@ -15,6 +16,27 @@ export function AppHeader({
   userName = 'Shyam Sharma',
   userEmail = 'shyam@example.com',
 }: AppHeaderProps) {
+  const [advancing, setAdvancing] = useState(false);
+
+  const handleAdvanceDemo = async () => {
+    setAdvancing(true);
+    try {
+      await fetch('/api/dev/demo-clock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'advance_seconds',
+          seconds: 86400 * 30,
+          vaultId: '11111111-1111-4111-8111-111111111111',
+        }),
+      });
+    } catch {
+      // ignore in UI
+    } finally {
+      setAdvancing(false);
+    }
+  };
+
   return (
     <header className="h-16 border-b border-[#E8E2D5] bg-[#FAF7F2]/90 backdrop-blur-md px-6 flex items-center justify-between sticky top-0 z-30">
       {/* Search Bar */}
@@ -29,11 +51,16 @@ export function AppHeader({
 
       {/* Right Controls */}
       <div className="flex items-center gap-4">
-        {/* Demo Mode Badge */}
-        <div className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#F5EEDC] text-[#8C6512] border border-[#E8DCB8]">
+        {/* Demo Mode Button */}
+        <button
+          type="button"
+          onClick={handleAdvanceDemo}
+          title="Click to advance simulated demo clock by 30 days"
+          className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[11px] font-medium bg-[#F5EEDC] hover:bg-[#EFE5CE] text-[#8C6512] border border-[#E8DCB8] transition cursor-pointer"
+        >
           <Clock className="h-3 w-3" />
-          <span>Demo Clock Active</span>
-        </div>
+          <span>{advancing ? 'Advancing...' : 'Demo Clock (+30d)'}</span>
+        </button>
 
         {/* Emergency Trigger Shortcut */}
         <Link
