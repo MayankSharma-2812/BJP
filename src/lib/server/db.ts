@@ -6,6 +6,8 @@ import type {
   AuditEventRecord,
   NomineeRecord,
   ProfileRecord,
+  RecoveryApprovalRecord,
+  RecoveryRequestRecord,
   VaultRecord,
 } from '@/types/database';
 import type {
@@ -13,7 +15,23 @@ import type {
   NomineeInput,
   NomineeItemResponse,
   UpdateEnvelopeRequest,
+  DecisionResponse,
+  CheckInResponse,
+  CancelRecoveryResponse,
 } from '@/types/api';
+import {
+  processCheckIn,
+  evaluateScheduledTransition,
+  processNomineeDecision,
+  cancelRecovery,
+  VaultStateContext,
+  getAuthoritativeTime,
+  DEMO_GRACE_PERIOD_SECONDS,
+  DEMO_COOLING_OFF_SECONDS,
+  DEMO_UNLOCK_WINDOW_SECONDS,
+} from '@/lib/recovery';
+import { buildAuditEvent, verifyAuditChain } from '@/lib/audit';
+import { GENESIS_PREVIOUS_HASH, AuditEvent, AuditEventType, AuditMetadata } from '@/types/audit';
 
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -46,12 +64,16 @@ class MockDbStore {
   vaults = new Map<string, VaultRecord>();
   nominees = new Map<string, NomineeRecord>();
   auditEvents: AuditEventRecord[] = [];
+  recoveryRequests = new Map<string, RecoveryRequestRecord>();
+  recoveryApprovals = new Map<string, RecoveryApprovalRecord>();
 
   reset() {
     this.profiles.clear();
     this.vaults.clear();
     this.nominees.clear();
     this.auditEvents = [];
+    this.recoveryRequests.clear();
+    this.recoveryApprovals.clear();
   }
 }
 
@@ -429,4 +451,750 @@ export async function acceptInvite(
       acceptedAt: now,
     };
   }
+}
+
+// ============================================================================
+// Recovery & Audit Operations (Workstream A2 / A3)
+// ============================================================================
+
+export async function getVaultAdminDb(vaultId: string): Promise<VaultRecord> {
+  const client = getSupabaseServiceClient();
+  if (client) {
+    const { data, error } = await client.from('vaults').select('*').eq('id', vaultId).maybeSingle();
+    if (error || !data) throw new DbError('NOT_FOUND', 'Vault not found.');
+    return data as VaultRecord;
+  } else {
+    const v = mockStore.vaults.get(vaultId);
+    if (!v) throw new DbError('NOT_FOUND', 'Vault not found.');
+    return v;
+  }
+}
+
+export function vaultRecordToContext(v: VaultRecord): VaultStateContext {
+  return {
+    vaultId: v.id,
+    status: v.status as VaultStateContext['status'],
+    checkinIntervalSeconds: v.checkin_interval_seconds,
+    gracePeriodSeconds: DEMO_GRACE_PERIOD_SECONDS,
+    coolingOffSeconds: DEMO_COOLING_OFF_SECONDS,
+    unlockWindowSeconds: DEMO_UNLOCK_WINDOW_SECONDS,
+    lastCheckInAt: v.last_checkin_at,
+    nextCheckInAt: v.next_checkin_at,
+    graceEndsAt: v.grace_ends_at,
+    coolingOffEndsAt: v.cooling_off_ends_at,
+    unlockExpiresAt: v.unlock_expires_at,
+  };
+}
+
+export async function appendAuditEventDb(
+  vaultId: string,
+  eventType: AuditEventType,
+  metadata: Record<string, unknown>,
+  actorUserId?: string | null,
+  requestId?: string | null
+): Promise<AuditEventRecord> {
+  const client = getSupabaseServiceClient();
+
+  if (client) {
+    const { data: latestEvents } = await client
+      .from('audit_events')
+      .select('sequence, event_hash')
+      .eq('vault_id', vaultId)
+      .order('sequence', { ascending: false })
+      .limit(1);
+
+    const prevHash = latestEvents && latestEvents.length > 0
+      ? latestEvents[0].event_hash
+      : GENESIS_PREVIOUS_HASH;
+    const nextSeq = latestEvents && latestEvents.length > 0
+      ? Number(latestEvents[0].sequence) + 1
+      : 1;
+
+    const event = buildAuditEvent({
+      vaultId,
+      sequence: nextSeq,
+      eventType,
+      actorUserId,
+      metadata,
+      previousHash: prevHash,
+      requestId,
+    });
+
+    const record: AuditEventRecord = {
+      id: event.id,
+      vault_id: event.vaultId,
+      sequence: event.sequence,
+      event_type: event.eventType,
+      actor_user_id: event.actorUserId,
+      server_time: event.serverTime,
+      event_metadata: event.metadata,
+      previous_hash: event.previousHash,
+      event_hash: event.eventHash,
+      request_id: event.requestId ?? null,
+    };
+
+    await client.from('audit_events').insert(record);
+    return record;
+  } else {
+    const vaultEvents = mockStore.auditEvents.filter((e) => e.vault_id === vaultId);
+    vaultEvents.sort((a, b) => a.sequence - b.sequence);
+
+    const prevHash = vaultEvents.length > 0
+      ? vaultEvents[vaultEvents.length - 1].event_hash
+      : GENESIS_PREVIOUS_HASH;
+    const nextSeq = vaultEvents.length > 0
+      ? vaultEvents[vaultEvents.length - 1].sequence + 1
+      : 1;
+
+    const event = buildAuditEvent({
+      vaultId,
+      sequence: nextSeq,
+      eventType,
+      actorUserId,
+      metadata,
+      previousHash: prevHash,
+      requestId,
+    });
+
+    const record: AuditEventRecord = {
+      id: event.id,
+      vault_id: event.vaultId,
+      sequence: event.sequence,
+      event_type: event.eventType,
+      actor_user_id: event.actorUserId,
+      server_time: event.serverTime,
+      event_metadata: event.metadata,
+      previous_hash: event.previousHash,
+      event_hash: event.eventHash,
+      request_id: event.requestId ?? null,
+    };
+
+    mockStore.auditEvents.push(record);
+    return record;
+  }
+}
+
+export async function recordCheckInDb(
+  vaultId: string,
+  ownerId: string
+): Promise<CheckInResponse> {
+  const { vault, isOwner } = await getVaultById(vaultId, ownerId);
+  if (!isOwner) {
+    throw new DbError('FORBIDDEN', 'Only the vault owner can record check-in.');
+  }
+
+  const context = vaultRecordToContext(vault);
+  const currentTime = getAuthoritativeTime();
+  const transition = processCheckIn(context, currentTime);
+
+  const client = getSupabaseServiceClient();
+  if (client) {
+    const { error } = await client
+      .from('vaults')
+      .update({
+        status: transition.newStatus,
+        last_checkin_at: transition.updatedContext.lastCheckInAt,
+        next_checkin_at: transition.updatedContext.nextCheckInAt,
+        grace_ends_at: null,
+        cooling_off_ends_at: null,
+        unlock_expires_at: null,
+        updated_at: currentTime.toISOString(),
+      })
+      .eq('id', vaultId);
+
+    if (error) {
+      throw new DbError('INTERNAL_ERROR', `Failed to record check-in: ${error.message}`);
+    }
+  } else {
+    const existing = mockStore.vaults.get(vaultId)!;
+    mockStore.vaults.set(vaultId, {
+      ...existing,
+      status: transition.newStatus as VaultRecord['status'],
+      last_checkin_at: transition.updatedContext.lastCheckInAt,
+      next_checkin_at: transition.updatedContext.nextCheckInAt,
+      grace_ends_at: null,
+      cooling_off_ends_at: null,
+      unlock_expires_at: null,
+      updated_at: currentTime.toISOString(),
+    });
+  }
+
+  await appendAuditEventDb(vaultId, 'checkin_recorded', {
+    nextCheckInAt: transition.updatedContext.nextCheckInAt,
+    restoredStatus: transition.newStatus,
+  }, ownerId);
+
+  return {
+    success: true,
+    vaultId,
+    status: transition.newStatus,
+    lastCheckInAt: transition.updatedContext.lastCheckInAt,
+    nextCheckInAt: transition.updatedContext.nextCheckInAt,
+  };
+}
+
+export async function getOrCreateRecoveryRequestDb(
+  vaultId: string,
+  requestingUserId: string
+): Promise<RecoveryRequestRecord> {
+  await getVaultById(vaultId, requestingUserId);
+
+  const client = getSupabaseServiceClient();
+  const now = getAuthoritativeTime().toISOString();
+
+  if (client) {
+    const { data: existing } = await client
+      .from('recovery_requests')
+      .select('*')
+      .eq('vault_id', vaultId)
+      .in('status', ['pending', 'cooling_off', 'ready'])
+      .maybeSingle();
+
+    if (existing) {
+      return existing as RecoveryRequestRecord;
+    }
+
+    const newRequest: RecoveryRequestRecord = {
+      id: crypto.randomUUID(),
+      vault_id: vaultId,
+      status: 'pending',
+      started_at: now,
+      cooling_off_ends_at: null,
+      unlock_expires_at: null,
+      cancelled_at: null,
+      cancelled_by: null,
+      revision: 1,
+      created_at: now,
+    };
+
+    const { error } = await client.from('recovery_requests').insert(newRequest);
+    if (error) {
+      throw new DbError('INTERNAL_ERROR', `Failed to open recovery request: ${error.message}`);
+    }
+
+    await appendAuditEventDb(vaultId, 'recovery_request_opened', {
+      recoveryRequestId: newRequest.id,
+      startedAt: now,
+    }, requestingUserId, newRequest.id);
+
+    return newRequest;
+  } else {
+    for (const req of mockStore.recoveryRequests.values()) {
+      if (req.vault_id === vaultId && ['pending', 'cooling_off', 'ready'].includes(req.status)) {
+        return req;
+      }
+    }
+
+    const newRequest: RecoveryRequestRecord = {
+      id: crypto.randomUUID(),
+      vault_id: vaultId,
+      status: 'pending',
+      started_at: now,
+      cooling_off_ends_at: null,
+      unlock_expires_at: null,
+      cancelled_at: null,
+      cancelled_by: null,
+      revision: 1,
+      created_at: now,
+    };
+
+    mockStore.recoveryRequests.set(newRequest.id, newRequest);
+
+    await appendAuditEventDb(vaultId, 'recovery_request_opened', {
+      recoveryRequestId: newRequest.id,
+      startedAt: now,
+    }, requestingUserId, newRequest.id);
+
+    return newRequest;
+  }
+}
+
+export async function recordNomineeDecisionDb(
+  recoveryRequestId: string,
+  nomineeUserId: string,
+  decision: 'approve' | 'decline',
+  idempotencyKey: string
+): Promise<DecisionResponse> {
+  const client = getSupabaseServiceClient();
+  const currentTime = getAuthoritativeTime();
+  const nowIso = currentTime.toISOString();
+
+  let recoveryRequest: RecoveryRequestRecord | null = null;
+  let vault: VaultRecord | null = null;
+  let nominee: NomineeRecord | null = null;
+  let existingApprovals: RecoveryApprovalRecord[] = [];
+
+  if (client) {
+    const { data: req } = await client
+      .from('recovery_requests')
+      .select('*')
+      .eq('id', recoveryRequestId)
+      .maybeSingle();
+    if (!req) throw new DbError('NOT_FOUND', 'Recovery request not found.');
+    recoveryRequest = req as RecoveryRequestRecord;
+
+    const { data: v } = await client.from('vaults').select('*').eq('id', req.vault_id).maybeSingle();
+    if (!v) throw new DbError('NOT_FOUND', 'Associated vault not found.');
+    vault = v as VaultRecord;
+
+    const { data: nom } = await client
+      .from('nominees')
+      .select('*')
+      .eq('vault_id', vault.id)
+      .eq('user_id', nomineeUserId)
+      .eq('status', 'active')
+      .maybeSingle();
+    if (!nom) throw new DbError('FORBIDDEN', 'Only active nominees can record approval decisions.');
+    nominee = nom as NomineeRecord;
+
+    const { data: approvals } = await client
+      .from('recovery_approvals')
+      .select('*')
+      .eq('recovery_request_id', recoveryRequestId);
+    existingApprovals = (approvals as RecoveryApprovalRecord[]) || [];
+  } else {
+    recoveryRequest = mockStore.recoveryRequests.get(recoveryRequestId) || null;
+    if (!recoveryRequest) throw new DbError('NOT_FOUND', 'Recovery request not found.');
+
+    vault = mockStore.vaults.get(recoveryRequest.vault_id) || null;
+    if (!vault) throw new DbError('NOT_FOUND', 'Associated vault not found.');
+
+    for (const nom of mockStore.nominees.values()) {
+      if (nom.vault_id === vault.id && nom.user_id === nomineeUserId && nom.status === 'active') {
+        nominee = nom;
+        break;
+      }
+    }
+    if (!nominee) throw new DbError('FORBIDDEN', 'Only active nominees can record approval decisions.');
+
+    existingApprovals = Array.from(mockStore.recoveryApprovals.values()).filter(
+      (a) => a.recovery_request_id === recoveryRequestId
+    );
+  }
+
+  // Convert approvals to typed domain objects
+  const domainApprovals = existingApprovals.map((a) => ({
+    id: a.id,
+    recoveryRequestId: a.recovery_request_id,
+    nomineeId: a.nominee_id,
+    decision: a.decision,
+    createdAt: a.created_at,
+    requestId: a.request_id || undefined,
+  }));
+
+  const vaultContext = vaultRecordToContext(vault);
+  // Ensure context status matches recovery request state
+  if (recoveryRequest.status === 'pending') {
+    vaultContext.status = 'RECOVERY_PENDING';
+  }
+
+  const { transitionResult, approvedCount, thresholdMet, isDuplicate } = processNomineeDecision(
+    vaultContext,
+    domainApprovals,
+    nominee.id,
+    decision,
+    currentTime
+  );
+
+  // Record approval entry
+  const approvalRecordId = crypto.randomUUID();
+  const approvalRecord: RecoveryApprovalRecord = {
+    id: approvalRecordId,
+    recovery_request_id: recoveryRequestId,
+    nominee_id: nominee.id,
+    decision,
+    created_at: nowIso,
+    request_id: idempotencyKey,
+  };
+
+  if (client) {
+    if (!isDuplicate) {
+      await client.from('recovery_approvals').upsert(approvalRecord, {
+        onConflict: 'recovery_request_id,nominee_id',
+      });
+    }
+
+    if (thresholdMet) {
+      await client
+        .from('recovery_requests')
+        .update({
+          status: 'cooling_off',
+          cooling_off_ends_at: transitionResult.updatedContext.coolingOffEndsAt,
+        })
+        .eq('id', recoveryRequestId);
+
+      await client
+        .from('vaults')
+        .update({
+          status: 'RECOVERY_COOLING_OFF',
+          cooling_off_ends_at: transitionResult.updatedContext.coolingOffEndsAt,
+          updated_at: nowIso,
+        })
+        .eq('id', vault.id);
+    }
+  } else {
+    mockStore.recoveryApprovals.set(
+      `${recoveryRequestId}:${nominee.id}`,
+      approvalRecord
+    );
+
+    if (thresholdMet) {
+      mockStore.recoveryRequests.set(recoveryRequestId, {
+        ...recoveryRequest,
+        status: 'cooling_off',
+        cooling_off_ends_at: transitionResult.updatedContext.coolingOffEndsAt,
+      });
+
+      mockStore.vaults.set(vault.id, {
+        ...vault,
+        status: 'RECOVERY_COOLING_OFF',
+        cooling_off_ends_at: transitionResult.updatedContext.coolingOffEndsAt,
+        updated_at: nowIso,
+      });
+    }
+  }
+
+  // Audit logging
+  const auditEventType: AuditEventType = decision === 'approve' ? 'nominee_approved' : 'nominee_declined';
+  await appendAuditEventDb(vault.id, auditEventType, {
+    recoveryRequestId,
+    nomineeId: nominee.id,
+    decision,
+    approvedCount,
+    thresholdMet,
+  }, nomineeUserId, recoveryRequestId);
+
+  if (thresholdMet) {
+    await appendAuditEventDb(vault.id, 'cooling_off_started', {
+      recoveryRequestId,
+      coolingOffEndsAt: transitionResult.updatedContext.coolingOffEndsAt,
+    }, null, recoveryRequestId);
+  }
+
+  return {
+    success: true,
+    recoveryRequestId,
+    status: thresholdMet ? 'cooling_off' : recoveryRequest.status,
+    approvedCount,
+    thresholdMet,
+    coolingOffEndsAt: transitionResult.updatedContext.coolingOffEndsAt ?? undefined,
+  };
+}
+
+export async function cancelRecoveryDb(
+  recoveryRequestId: string,
+  ownerId: string
+): Promise<CancelRecoveryResponse> {
+  const client = getSupabaseServiceClient();
+  const currentTime = getAuthoritativeTime();
+  const nowIso = currentTime.toISOString();
+
+  let recoveryRequest: RecoveryRequestRecord | null = null;
+  let vault: VaultRecord | null = null;
+
+  if (client) {
+    const { data: req } = await client
+      .from('recovery_requests')
+      .select('*')
+      .eq('id', recoveryRequestId)
+      .maybeSingle();
+    if (!req) throw new DbError('NOT_FOUND', 'Recovery request not found.');
+    recoveryRequest = req as RecoveryRequestRecord;
+
+    const { data: v } = await client.from('vaults').select('*').eq('id', req.vault_id).maybeSingle();
+    if (!v) throw new DbError('NOT_FOUND', 'Associated vault not found.');
+    vault = v as VaultRecord;
+  } else {
+    recoveryRequest = mockStore.recoveryRequests.get(recoveryRequestId) || null;
+    if (!recoveryRequest) throw new DbError('NOT_FOUND', 'Recovery request not found.');
+
+    vault = mockStore.vaults.get(recoveryRequest.vault_id) || null;
+    if (!vault) throw new DbError('NOT_FOUND', 'Associated vault not found.');
+  }
+
+  if (vault.owner_id !== ownerId) {
+    throw new DbError('FORBIDDEN', 'Only the vault owner can cancel recovery.');
+  }
+
+  const vaultContext = vaultRecordToContext(vault);
+  if (recoveryRequest.status === 'cooling_off') {
+    vaultContext.status = 'COOLING_OFF';
+  } else if (recoveryRequest.status === 'pending') {
+    vaultContext.status = 'RECOVERY_PENDING';
+  }
+
+  const transition = cancelRecovery(vaultContext, currentTime);
+
+  if (client) {
+    await client
+      .from('recovery_requests')
+      .update({
+        status: 'cancelled',
+        cancelled_at: nowIso,
+        cancelled_by: ownerId,
+      })
+      .eq('id', recoveryRequestId);
+
+    await client
+      .from('vaults')
+      .update({
+        status: 'ACTIVE',
+        last_checkin_at: transition.updatedContext.lastCheckInAt,
+        next_checkin_at: transition.updatedContext.nextCheckInAt,
+        cooling_off_ends_at: null,
+        grace_ends_at: null,
+        unlock_expires_at: null,
+        updated_at: nowIso,
+      })
+      .eq('id', vault.id);
+  } else {
+    mockStore.recoveryRequests.set(recoveryRequestId, {
+      ...recoveryRequest,
+      status: 'cancelled',
+      cancelled_at: nowIso,
+      cancelled_by: ownerId,
+    });
+
+    mockStore.vaults.set(vault.id, {
+      ...vault,
+      status: 'ACTIVE',
+      last_checkin_at: transition.updatedContext.lastCheckInAt,
+      next_checkin_at: transition.updatedContext.nextCheckInAt,
+      cooling_off_ends_at: null,
+      grace_ends_at: null,
+      unlock_expires_at: null,
+      updated_at: nowIso,
+    });
+  }
+
+  await appendAuditEventDb(vault.id, 'recovery_cancelled', {
+    recoveryRequestId,
+    cancelledAt: nowIso,
+  }, ownerId, recoveryRequestId);
+
+  return {
+    success: true,
+    vaultId: vault.id,
+    status: 'ACTIVE',
+    cancelledAt: nowIso,
+  };
+}
+
+export async function getRecoverySessionDb(
+  recoveryRequestId: string,
+  requestingUserId: string
+) {
+  const client = getSupabaseServiceClient();
+  const currentTime = getAuthoritativeTime();
+
+  let recoveryRequest: RecoveryRequestRecord | null = null;
+  let vault: VaultRecord | null = null;
+
+  if (client) {
+    const { data: req } = await client
+      .from('recovery_requests')
+      .select('*')
+      .eq('id', recoveryRequestId)
+      .maybeSingle();
+    if (!req) throw new DbError('NOT_FOUND', 'Recovery request not found.');
+    recoveryRequest = req as RecoveryRequestRecord;
+
+    const { data: v } = await client.from('vaults').select('*').eq('id', req.vault_id).maybeSingle();
+    if (!v) throw new DbError('NOT_FOUND', 'Vault not found.');
+    vault = v as VaultRecord;
+
+    const isOwner = vault.owner_id === requestingUserId;
+    if (!isOwner) {
+      const { data: nom } = await client
+        .from('nominees')
+        .select('id')
+        .eq('vault_id', vault.id)
+        .eq('user_id', requestingUserId)
+        .eq('status', 'active')
+        .maybeSingle();
+      if (!nom) throw new DbError('FORBIDDEN', 'Access denied to recovery session.');
+    }
+  } else {
+    recoveryRequest = mockStore.recoveryRequests.get(recoveryRequestId) || null;
+    if (!recoveryRequest) throw new DbError('NOT_FOUND', 'Recovery request not found.');
+
+    vault = mockStore.vaults.get(recoveryRequest.vault_id) || null;
+    if (!vault) throw new DbError('NOT_FOUND', 'Vault not found.');
+
+    const isOwner = vault.owner_id === requestingUserId;
+    if (!isOwner) {
+      const isNominee = Array.from(mockStore.nominees.values()).some(
+        (n) => n.vault_id === vault!.id && n.user_id === requestingUserId && n.status === 'active'
+      );
+      if (!isNominee) throw new DbError('FORBIDDEN', 'Access denied to recovery session.');
+    }
+  }
+
+  // Check state: must be ready
+  const isReady = recoveryRequest.status === 'ready' || vault.status === 'RECOVERY_READY';
+  if (!isReady) {
+    throw new DbError(
+      'RECOVERY_NOT_READY',
+      'Recovery is not ready: nominee approvals or cooling-off period have not completed.'
+    );
+  }
+
+  // Check expiry
+  if (recoveryRequest.unlock_expires_at) {
+    const expiresMs = new Date(recoveryRequest.unlock_expires_at).getTime();
+    if (currentTime.getTime() > expiresMs) {
+      throw new DbError('RECOVERY_WINDOW_EXPIRED', 'Recovery session has expired.');
+    }
+  }
+
+  return {
+    recoveryRequestId: recoveryRequest.id,
+    vaultId: vault.id,
+    status: recoveryRequest.status,
+    unlockExpiresAt: recoveryRequest.unlock_expires_at || new Date(Date.now() + 86400000).toISOString(),
+    payloadEnvelope: {
+      schemaVersion: vault.schema_version as 1,
+      cryptoVersion: vault.crypto_version as 1,
+      algorithm: 'AES-256-GCM' as const,
+      nonce: vault.payload_nonce,
+      aadVersion: vault.payload_aad_version as 1,
+      ciphertext: vault.payload_ciphertext,
+    },
+  };
+}
+
+export async function recordClientCompletionDb(
+  recoveryRequestId: string,
+  clientSessionId: string,
+  completedAt: string
+) {
+  let vaultId = '';
+  const client = getSupabaseServiceClient();
+
+  if (client) {
+    const { data: req } = await client
+      .from('recovery_requests')
+      .select('vault_id')
+      .eq('id', recoveryRequestId)
+      .maybeSingle();
+    if (req) vaultId = req.vault_id;
+  } else {
+    const req = mockStore.recoveryRequests.get(recoveryRequestId);
+    if (req) vaultId = req.vault_id;
+  }
+
+  if (vaultId) {
+    await appendAuditEventDb(vaultId, 'client_reported_recovery_complete', {
+      recoveryRequestId,
+      clientSessionId,
+      completedAt,
+    }, null, recoveryRequestId);
+  }
+
+  return { success: true };
+}
+
+export async function advanceWorkflowsDb() {
+  const currentTime = getAuthoritativeTime();
+  const transitionedVaults: string[] = [];
+
+  const client = getSupabaseServiceClient();
+  if (client) {
+    const { data: vaults } = await client.from('vaults').select('*');
+    for (const v of vaults || []) {
+      const context = vaultRecordToContext(v as VaultRecord);
+      const res = evaluateScheduledTransition(context, currentTime);
+      if (res.transitionOccurred) {
+        await client
+          .from('vaults')
+          .update({
+            status: res.newStatus,
+            grace_ends_at: res.updatedContext.graceEndsAt,
+            cooling_off_ends_at: res.updatedContext.coolingOffEndsAt,
+            unlock_expires_at: res.updatedContext.unlockExpiresAt,
+            updated_at: currentTime.toISOString(),
+          })
+          .eq('id', v.id);
+
+        transitionedVaults.push(v.id);
+        await appendAuditEventDb(v.id, 'state_transitioned', {
+          previousStatus: res.previousStatus,
+          newStatus: res.newStatus,
+          reason: res.transitionReason,
+        });
+      }
+    }
+  } else {
+    for (const [id, v] of mockStore.vaults.entries()) {
+      const context = vaultRecordToContext(v);
+      const res = evaluateScheduledTransition(context, currentTime);
+      if (res.transitionOccurred) {
+        mockStore.vaults.set(id, {
+          ...v,
+          status: res.newStatus as VaultRecord['status'],
+          grace_ends_at: res.updatedContext.graceEndsAt,
+          cooling_off_ends_at: res.updatedContext.coolingOffEndsAt,
+          unlock_expires_at: res.updatedContext.unlockExpiresAt,
+          updated_at: currentTime.toISOString(),
+        });
+        transitionedVaults.push(id);
+        await appendAuditEventDb(id, 'state_transitioned', {
+          previousStatus: res.previousStatus,
+          newStatus: res.newStatus,
+          reason: res.transitionReason,
+        });
+      }
+    }
+  }
+
+  return {
+    success: true,
+    transitionedCount: transitionedVaults.length,
+    transitionedVaults,
+    evaluatedAt: currentTime.toISOString(),
+  };
+}
+
+export async function getAuditTrailDb(
+  vaultId: string,
+  requestingUserId: string
+) {
+  // Check authorization
+  await getVaultById(vaultId, requestingUserId);
+
+  const client = getSupabaseServiceClient();
+  let rawEvents: AuditEventRecord[] = [];
+
+  if (client) {
+    const { data: events } = await client
+      .from('audit_events')
+      .select('*')
+      .eq('vault_id', vaultId)
+      .order('sequence', { ascending: true });
+    rawEvents = (events as AuditEventRecord[]) || [];
+  } else {
+    rawEvents = mockStore.auditEvents.filter((e) => e.vault_id === vaultId);
+    rawEvents.sort((a, b) => a.sequence - b.sequence);
+  }
+
+  const domainEvents: AuditEvent[] = rawEvents.map((e) => ({
+    id: e.id,
+    vaultId: e.vault_id,
+    sequence: Number(e.sequence),
+    eventType: e.event_type,
+    actorUserId: e.actor_user_id,
+    serverTime: e.server_time,
+    metadata: e.event_metadata as AuditMetadata,
+    previousHash: e.previous_hash,
+    eventHash: e.event_hash,
+    requestId: e.request_id || undefined,
+  }));
+
+  const verification = verifyAuditChain(domainEvents);
+
+  return {
+    vaultId,
+    events: domainEvents,
+    verification,
+  };
 }
