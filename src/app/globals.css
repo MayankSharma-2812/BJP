@@ -1,26 +1,82 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --background: #FAF7F2;
+  --foreground: #181816;
+  --card: #FFFFFF;
+  --card-foreground: #181816;
+  --border: #E8E2D5;
+  --border-strong: #D5CEBF;
+  --muted: #6B665D;
+  --muted-bg: #F2ECE1;
+  --accent-gold: #DFB140;
+  --accent-gold-light: #F9F3DF;
+  --accent-gold-text: #7A5B0B;
+  --primary: #1C1D1F;
+  --primary-foreground: #FFFFFF;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-border: var(--border);
+  --color-border-strong: var(--border-strong);
+  --color-muted: var(--muted);
+  --color-muted-bg: var(--muted-bg);
+  --color-accent-gold: var(--accent-gold);
+  --color-accent-gold-light: var(--accent-gold-light);
+  --color-accent-gold-text: var(--accent-gold-text);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --font-sans: var(--font-geist-sans), -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-serif: Georgia, "Playfair Display", Cambria, serif;
 }
 
 body {
-  background: var(--background);
+  background-color: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-sans);
+  min-height: 100vh;
+}
+
+/* Concept C Editorial Aesthetic Utilities */
+.paper-card {
+  background: #FFFFFF;
+  border: 1px solid var(--border);
+  box-shadow: 0 1px 3px rgba(24, 24, 22, 0.04), 0 4px 12px rgba(24, 24, 22, 0.02);
+  border-radius: 1rem;
+}
+
+.highlighter-gold {
+  position: relative;
+  display: inline-block;
+  white-space: nowrap;
+}
+
+.highlighter-gold::after {
+  content: "";
+  position: absolute;
+  left: -4px;
+  right: -4px;
+  bottom: 2px;
+  height: 38%;
+  background: rgba(223, 177, 64, 0.45);
+  border-radius: 3px;
+  z-index: -1;
+  transform: rotate(-0.5deg);
+}
+
+.stamp-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.375rem;
+  padding: 0.25rem 0.625rem;
+  border-radius: 9999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  border: 1px solid var(--border-strong);
+  background: var(--muted-bg);
+  color: var(--muted);
 }
