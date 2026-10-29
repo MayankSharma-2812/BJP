@@ -55,81 +55,90 @@ export default function RecoveryPage() {
       const shareBytes2 = base64UrlToUint8Array(parsed2.share);
       const reconstructedDek = await combineShares([shareBytes1, shareBytes2]);
 
-      // 3. Fetch encrypted envelope from server API
-      let envelope: EncryptedPayloadEnvelope;
       try {
-        const res = await fetch(`/api/vaults/${parsed1.vaultId}`, {
-          headers: {
-            'x-test-user-id': 'user-nominee-5555-6666',
-          },
-        });
+        // 3. Fetch encrypted envelope from server API or local storage cache
+        let envelope: EncryptedPayloadEnvelope | null = null;
 
-        if (res.ok) {
-          const vaultRecord = await res.json();
-          envelope = {
-            schemaVersion: 1,
-            cryptoVersion: 1,
-            algorithm: 'AES-256-GCM',
-            nonce: vaultRecord.payloadNonce,
-            aadVersion: 1,
-            ciphertext: vaultRecord.payloadCiphertext,
-          };
-        } else {
-          throw new Error('API fetch failed');
+        if (typeof window !== 'undefined') {
+          const cachedEnv = localStorage.getItem('last_mile_active_vault_envelope');
+          if (cachedEnv) {
+            try {
+              envelope = JSON.parse(cachedEnv);
+            } catch {
+              // Ignore parse error
+            }
+          }
         }
-      } catch {
-        // Fallback for standalone offline demo
-        envelope = {
-          schemaVersion: 1,
-          cryptoVersion: 1,
-          algorithm: 'AES-256-GCM',
-          nonce: 'MDEyMzQ1Njc4OTAx',
-          aadVersion: 1,
-          ciphertext: 'ZW5jcnlwdGVkUGF5bG9hZENpcGhlcnRleHQ',
-        };
-      }
 
-      // 4. Decrypt locally with AES-256-GCM and verify AAD
-      try {
-        const payload = await decryptPayload(envelope, reconstructedDek, parsed1.vaultId);
-        setDecryptedPayload(payload);
-      } catch {
-        // Render sample recovered payload for demo walkthrough
-        setDecryptedPayload({
-          schemaVersion: 1,
-          vaultId: parsed1.vaultId,
-          vaultName: 'Recovered Family Continuity Vault',
-          updatedAt: new Date().toISOString(),
-          assets: [
-            {
-              id: '11111111-1111-1111-1111-111111111101',
-              category: 'bank_account',
-              institutionName: 'HDFC Bank Savings Account',
-              accountReference: '•••• •••• 4321',
-              documentLocation: 'Safe locker #4 in Jaipur Branch. Passbook in top office shelf.',
-              claimInstructions: ['Contact branch manager with certified death certificate.'],
-              notes: 'Primary emergency fund',
-            },
-            {
-              id: '11111111-1111-1111-1111-111111111102',
-              category: 'insurance_policy',
-              institutionName: 'LIC Life Insurance (₹1 Cr Cover)',
-              accountReference: 'Policy No. 123456789',
-              documentLocation: 'Blue physical folder in home study safe.',
-              claimInstructions: ['Priya Sharma registered primary nominee.'],
-              notes: 'Term plan with accidental death benefit',
-            },
-            {
-              id: '11111111-1111-1111-1111-111111111103',
-              category: 'investment',
-              institutionName: 'SBI Bluechip Mutual Fund',
-              accountReference: 'Folio: 498765123',
-              documentLocation: 'CAMS / Karvy service center.',
-              claimInstructions: ['Submit Form T3 with PAN verification.'],
-              notes: 'Growth option',
-            },
-          ],
-        });
+        if (!envelope) {
+          try {
+            const res = await fetch(`/api/vaults/${parsed1.vaultId}`, {
+              headers: {
+                'x-test-user-id': '22222222-2222-4222-8222-222222222222',
+              },
+            });
+
+            if (res.ok) {
+              const vaultRecord = await res.json();
+              envelope = {
+                schemaVersion: 1,
+                cryptoVersion: 1,
+                algorithm: 'AES-256-GCM',
+                nonce: vaultRecord.payloadNonce,
+                aadVersion: 1,
+                ciphertext: vaultRecord.payloadCiphertext,
+              };
+            }
+          } catch {
+            // API fetch failed
+          }
+        }
+
+        // 4. Decrypt locally with AES-256-GCM and verify AAD
+        if (envelope && envelope.ciphertext) {
+          const payload = await decryptPayload(envelope, reconstructedDek, parsed1.vaultId);
+          setDecryptedPayload(payload);
+        } else {
+          // Fallback sample payload for standalone demo walkthrough
+          setDecryptedPayload({
+            schemaVersion: 1,
+            vaultId: parsed1.vaultId,
+            vaultName: 'Recovered Family Continuity Vault',
+            updatedAt: new Date().toISOString(),
+            assets: [
+              {
+                id: '11111111-1111-1111-1111-111111111101',
+                category: 'bank_account',
+                institutionName: 'HDFC Bank Savings Account',
+                accountReference: '•••• •••• 4321',
+                documentLocation: 'Safe locker #4 in Jaipur Branch. Passbook in top office shelf.',
+                claimInstructions: ['Contact branch manager with certified death certificate.'],
+                notes: 'Primary emergency fund',
+              },
+              {
+                id: '11111111-1111-1111-1111-111111111102',
+                category: 'insurance_policy',
+                institutionName: 'LIC Life Insurance (₹1 Cr Cover)',
+                accountReference: 'Policy No. 123456789',
+                documentLocation: 'Blue physical folder in home study safe.',
+                claimInstructions: ['Priya Sharma registered primary nominee.'],
+                notes: 'Term plan with accidental death benefit',
+              },
+              {
+                id: '11111111-1111-1111-1111-111111111103',
+                category: 'investment',
+                institutionName: 'SBI Bluechip Mutual Fund',
+                accountReference: 'Folio: 498765123',
+                documentLocation: 'CAMS / Karvy service center.',
+                claimInstructions: ['Submit Form T3 with PAN verification.'],
+                notes: 'Growth option',
+              },
+            ],
+          });
+        }
+      } finally {
+        // Zero reconstructed key from memory
+        reconstructedDek.fill(0);
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to process recovery cards.';

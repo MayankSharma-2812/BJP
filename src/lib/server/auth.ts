@@ -35,6 +35,20 @@ export async function getAuthenticatedUser(request: NextRequest): Promise<Authen
     const cookieToken = request.cookies.get('sb-access-token')?.value;
     if (cookieToken) {
       token = cookieToken;
+    } else {
+      // Modern Supabase SSR sets cookies matching sb-<project-ref>-auth-token
+      const allCookies = request.cookies.getAll();
+      const sbAuthCookie = allCookies.find(
+        (c) => c.name.startsWith('sb-') && c.name.endsWith('-auth-token')
+      );
+      if (sbAuthCookie) {
+        try {
+          const parsed = JSON.parse(sbAuthCookie.value);
+          token = Array.isArray(parsed) ? parsed[0] : (parsed.access_token || sbAuthCookie.value);
+        } catch {
+          token = sbAuthCookie.value;
+        }
+      }
     }
   }
 

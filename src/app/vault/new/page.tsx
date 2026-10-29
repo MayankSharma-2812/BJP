@@ -22,6 +22,7 @@ import {
   Copy,
   Check,
   AlertCircle,
+  RefreshCw,
 } from 'lucide-react';
 import {
   generateDek,
@@ -191,11 +192,13 @@ export default function NewVaultWizardPage() {
 
   const handleCreateVault = async () => {
     setIsSubmitting(true);
+    let dek: Uint8Array | null = null;
+    let kek: Uint8Array | null = null;
     try {
       const vaultId = crypto.randomUUID();
 
       // 1. Generate random 256-bit DEK
-      const dek = generateDek();
+      dek = generateDek();
 
       // 2. Encrypt asset payload locally with Web Crypto AES-256-GCM
       const vaultPayload: VaultPayload = {
@@ -217,7 +220,8 @@ export default function NewVaultWizardPage() {
 
       // 3. Derive KEK via scrypt and wrap DEK
       const salt = generateKdfSalt();
-      const { kek, params: kdfParams } = await deriveKek(passphrase, salt);
+      const { kek: derivedKek, params: kdfParams } = await deriveKek(passphrase, salt);
+      kek = derivedKek;
       const wrappedEnvelope = await wrapDek(dek, kek, vaultId, salt, kdfParams);
 
       // 4. Split DEK with Shamir 2-of-3
@@ -229,12 +233,18 @@ export default function NewVaultWizardPage() {
       const serializedCards = cards.map(serializeRecoveryCard);
       setGeneratedCards(serializedCards);
 
+      // Cache active vault and envelope in browser for seamless dashboard flow
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('last_mile_active_vault', vaultId);
+        localStorage.setItem('last_mile_active_vault_envelope', JSON.stringify(encryptedEnvelope));
+      }
+
       // 5. Send only ciphertext envelope and wrapped key metadata to server
       const res = await fetch('/api/vaults', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-user-id': 'user-owner-1111-2222',
+          'x-test-user-id': '11111111-1111-4111-8111-111111111111',
         },
         body: JSON.stringify({
           id: vaultId,
@@ -261,7 +271,7 @@ export default function NewVaultWizardPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-user-id': 'user-owner-1111-2222',
+          'x-test-user-id': '11111111-1111-4111-8111-111111111111',
         },
         body: JSON.stringify({
           nominees: nominees.map((n) => ({
@@ -274,6 +284,9 @@ export default function NewVaultWizardPage() {
     } catch {
       // In local demo mode, fallback gracefully
     } finally {
+      // Proactively scrub transient key buffers from browser memory
+      if (dek) dek.fill(0);
+      if (kek) kek.fill(0);
       setIsSubmitting(false);
     }
   };
@@ -745,8 +758,9 @@ export default function NewVaultWizardPage() {
                     onClick={handleCreateVault}
                     className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-8 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#2C2D2F] transition disabled:opacity-50 focus-visible:ring-2 focus-visible:ring-[#1C1D1F] focus-visible:outline-none"
                   >
-                    <span>{isSubmitting ? 'Encrypting & Splitting Keys...' : 'Generate Keys & Create Vault'}</span>
-                    <ArrowRight className="h-4 w-4" />
+                    {isSubmitting && <RefreshCw className="h-4 w-4 animate-spin text-emerald-400" />}
+                    <span>{isSubmitting ? 'Deriving Keys & Encrypting...' : 'Generate Keys & Create Vault'}</span>
+                    {!isSubmitting && <ArrowRight className="h-4 w-4" />}
                   </button>
                 </div>
               </>

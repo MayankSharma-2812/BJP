@@ -90,11 +90,16 @@ function shouldUseMockDb(): boolean {
   return false;
 }
 
+let cachedSupabaseClient: SupabaseClient | null = null;
+
 export function getSupabaseServiceClient(): SupabaseClient | null {
   if (shouldUseMockDb()) return null;
-  return createClient(supabaseUrl!, supabaseServiceKey!, {
-    auth: { persistSession: false },
-  });
+  if (!cachedSupabaseClient) {
+    cachedSupabaseClient = createClient(supabaseUrl!, supabaseServiceKey!, {
+      auth: { persistSession: false },
+    });
+  }
+  return cachedSupabaseClient;
 }
 
 // ============================================================================
@@ -142,13 +147,14 @@ export async function createVault(
     }
   } else {
     mockStore.vaults.set(vaultId, record);
-    await appendAuditEventDb(
-      vaultId,
-      'vault_created',
-      { schemaVersion: data.schemaVersion, cryptoVersion: data.cryptoVersion },
-      ownerId
-    );
   }
+
+  await appendAuditEventDb(
+    vaultId,
+    'vault_created',
+    { schemaVersion: data.schemaVersion, cryptoVersion: data.cryptoVersion },
+    ownerId
+  );
 
   return record;
 }
@@ -255,6 +261,13 @@ export async function updateVaultEnvelope(
       throw new DbError('REVISION_CONFLICT', 'Failed to update envelope due to concurrency conflict.');
     }
 
+    await appendAuditEventDb(
+      vaultId,
+      'payload_updated',
+      { revision: currentVault.revision + 1, aadVersion: data.payloadAadVersion },
+      ownerId
+    );
+
     return updatedVault as VaultRecord;
   } else {
     const currentVault = mockStore.vaults.get(vaultId);
@@ -281,18 +294,12 @@ export async function updateVaultEnvelope(
     };
 
     mockStore.vaults.set(vaultId, updated);
-    mockStore.auditEvents.push({
-      id: crypto.randomUUID(),
-      vault_id: vaultId,
-      sequence: mockStore.auditEvents.length + 1,
-      event_type: 'payload_updated',
-      actor_user_id: ownerId,
-      server_time: now,
-      event_metadata: { revision: newRevision, aadVersion: data.payloadAadVersion },
-      previous_hash: 'hash-prev',
-      event_hash: 'hash-new',
-      request_id: null,
-    });
+    await appendAuditEventDb(
+      vaultId,
+      'payload_updated',
+      { revision: newRevision, aadVersion: data.payloadAadVersion },
+      ownerId
+    );
 
     return updated;
   }
@@ -366,6 +373,13 @@ export async function setVaultNominees(
     }
   }
 
+  await appendAuditEventDb(
+    vaultId,
+    'nominee_added',
+    { nomineeCount: nominees.length },
+    ownerId
+  );
+
   return results;
 }
 
@@ -407,6 +421,13 @@ export async function acceptInvite(
       throw new DbError('INTERNAL_ERROR', 'Failed to accept invitation.');
     }
 
+    await appendAuditEventDb(
+      nominee.vault_id,
+      'invite_accepted',
+      { nomineeId: nominee.id },
+      userId
+    );
+
     return {
       nomineeId: nominee.id,
       vaultId: nominee.vault_id,
@@ -438,6 +459,13 @@ export async function acceptInvite(
       updated_at: now,
     };
     mockStore.nominees.set(matched.id, updated);
+
+    await appendAuditEventDb(
+      matched.vault_id,
+      'invite_accepted',
+      { nomineeId: matched.id },
+      userId
+    );
 
     return {
       nomineeId: matched.id,
@@ -487,6 +515,10 @@ export async function appendAuditEventDb(
   actorUserId?: string | null,
   requestId?: string | null
 ): Promise<AuditEventRecord> {
+  const safeActor = actorUserId && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(actorUserId)
+    ? actorUserId
+    : null;
+
   const client = getSupabaseServiceClient();
 
   if (client) {
@@ -508,7 +540,7 @@ export async function appendAuditEventDb(
       vaultId,
       sequence: nextSeq,
       eventType,
-      actorUserId,
+      actorUserId: safeActor,
       metadata,
       previousHash: prevHash,
       requestId,
@@ -925,7 +957,7 @@ export async function cancelRecoveryDb(
   const transition = cancelRecovery(vaultContext, currentTime);
 
   if (client) {
-    await client
+    const { error: reqErr } = await client
       .from('recovery_requests')
       .update({
         status: 'cancelled',
@@ -934,7 +966,11 @@ export async function cancelRecoveryDb(
       })
       .eq('id', recoveryRequestId);
 
-    await client
+    if (reqErr) {
+      throw new DbError('INTERNAL_ERROR', `Failed to cancel recovery request: ${reqErr.message}`);
+    }
+
+    const { error: vaultErr } = await client
       .from('vaults')
       .update({
         status: 'ACTIVE',
@@ -946,6 +982,10 @@ export async function cancelRecoveryDb(
         updated_at: nowIso,
       })
       .eq('id', vault.id);
+
+    if (vaultErr) {
+      throw new DbError('INTERNAL_ERROR', `Failed to restore active vault status: ${vaultErr.message}`);
+    }
   } else {
     mockStore.recoveryRequests.set(recoveryRequestId, {
       ...recoveryRequest,
@@ -1099,7 +1139,11 @@ export async function advanceWorkflowsDb() {
 
   const client = getSupabaseServiceClient();
   if (client) {
-    const { data: vaults } = await client.from('vaults').select('*');
+    const nowIso = currentTime.toISOString();
+    const { data: vaults } = await client
+      .from('vaults')
+      .select('*')
+      .or(`next_checkin_at.lte.${nowIso},grace_ends_at.lte.${nowIso},cooling_off_ends_at.lte.${nowIso},unlock_expires_at.lte.${nowIso}`);
     for (const v of vaults || []) {
       const context = vaultRecordToContext(v as VaultRecord);
       const res = evaluateScheduledTransition(context, currentTime);

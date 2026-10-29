@@ -25,7 +25,12 @@ export default function RecoveryCenterPage() {
 
   const handleCancelRecovery = async () => {
     try {
-      await fetch('/api/recovery-requests/req-primary/cancel', {
+      const activeReqId =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('last_mile_active_recovery_req') || 'req-primary'
+          : 'req-primary';
+
+      await fetch(`/api/recovery-requests/${activeReqId}/cancel`, {
         method: 'POST',
         headers: {
           'x-test-user-id': '11111111-1111-4111-8111-111111111111',

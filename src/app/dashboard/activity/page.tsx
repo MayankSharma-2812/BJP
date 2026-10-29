@@ -72,7 +72,12 @@ export default function ActivityLogPage() {
   const [isVerified, setIsVerified] = useState(true);
 
   useEffect(() => {
-    fetch('/api/vaults/vlt-primary/audit', {
+    const activeVaultId =
+      typeof window !== 'undefined'
+        ? localStorage.getItem('last_mile_active_vault') || 'vlt-primary'
+        : 'vlt-primary';
+
+    fetch(`/api/vaults/${activeVaultId}/audit`, {
       headers: { 'x-test-user-id': '11111111-1111-4111-8111-111111111111' },
     })
       .then((res) => (res.ok ? res.json() : null))
