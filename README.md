@@ -59,4 +59,5 @@ npm run dev
 
 ## Documentation
 
-Full architectural specifications, API contracts, threat model, and test plans are in the [`docs/`](docs/) directory.
+- **[Architecture & Technical Specification](docs/ARCHITECTURE.md):** Complete zero-knowledge cryptographic specification, threat model, tech stack decision matrix, and failure mode analysis.
+- **[Live Demo Runbook](docs/DEMO_WALKTHROUGH.md):** 8-step live demonstration sequence for hackathon presentation.
