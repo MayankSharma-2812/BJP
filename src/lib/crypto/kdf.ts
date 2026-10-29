@@ -9,6 +9,13 @@ export const DEFAULT_SCRYPT_PARAMS: ScryptKdfParams = {
   dkLen: 32, // 256-bit KEK
 };
 
+export const FAST_TEST_SCRYPT_PARAMS: ScryptKdfParams = {
+  N: 1024,
+  r: 8,
+  p: 1,
+  dkLen: 32,
+};
+
 export const SALT_LENGTH_BYTES = 16;
 
 /**
