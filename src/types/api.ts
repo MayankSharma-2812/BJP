@@ -1,6 +1,10 @@
+// API types and contract interfaces
+// References: docs/06_API_CONTRACT.md, docs/03_TRD.md
+
 import { z } from 'zod';
 import { RecoveryDecisionSchema, VaultStatusSchema } from './recovery';
 import { AuditEventSchema, AuditVerificationResult } from './audit';
+import type { KdfParams, VaultStatus } from './database';
 
 // ==========================================
 // 1. API Error Format
@@ -36,7 +40,7 @@ export const ApiErrorResponseSchema = z.object({
 export type ApiErrorResponse = z.infer<typeof ApiErrorResponseSchema>;
 
 // ==========================================
-// 2. Request & Response Payloads
+// 2. Workstream A: Recovery & Workflow Payloads (Mayank)
 // ==========================================
 
 // Check-in
@@ -124,3 +128,110 @@ export const AuditQueryResponseSchema = z.object({
 });
 
 export type AuditQueryResponse = z.infer<typeof AuditQueryResponseSchema>;
+
+// ==========================================
+// 3. Workstream B: Vault Persistence Payloads (Shyam)
+// ==========================================
+
+// POST /api/vaults
+export interface CreateVaultRequest {
+  schemaVersion: number;
+  cryptoVersion: number;
+  payloadCiphertext: string;
+  payloadNonce: string;
+  payloadAadVersion: number;
+  wrappedDek: string;
+  wrapNonce: string;
+  kdfName: 'scrypt';
+  kdfParams: KdfParams;
+  kdfSalt: string;
+  checkinIntervalSeconds: number;
+}
+
+export interface CreateVaultResponse {
+  vaultId: string;
+  status: VaultStatus;
+  revision: number;
+  nextCheckinAt: string;
+  createdAt: string;
+}
+
+// GET /api/vaults/:vaultId
+export interface GetVaultResponse {
+  id: string;
+  ownerId: string;
+  status: VaultStatus;
+  schemaVersion: number;
+  cryptoVersion: number;
+  payloadCiphertext: string;
+  payloadNonce: string;
+  payloadAadVersion: number;
+  wrappedDek: string;
+  wrapNonce: string;
+  kdfName: 'scrypt';
+  kdfParams: KdfParams;
+  kdfSalt: string;
+  checkinIntervalSeconds: number;
+  lastCheckinAt: string;
+  nextCheckinAt: string;
+  graceEndsAt: string | null;
+  coolingOffEndsAt: string | null;
+  unlockExpiresAt: string | null;
+  revision: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+// PUT /api/vaults/:vaultId/envelope
+export interface UpdateEnvelopeRequest {
+  expectedRevision: number;
+  payloadCiphertext: string;
+  payloadNonce: string;
+  payloadAadVersion: number;
+  wrappedDek?: string;
+  wrapNonce?: string;
+}
+
+export interface UpdateEnvelopeResponse {
+  vaultId: string;
+  revision: number;
+  updatedAt: string;
+}
+
+// POST /api/vaults/:vaultId/nominees
+export interface NomineeInput {
+  email: string;
+  displayName: string;
+  shareIndex: 1 | 2 | 3;
+}
+
+export interface SetNomineesRequest {
+  nominees: NomineeInput[];
+}
+
+export interface NomineeItemResponse {
+  id: string;
+  email: string;
+  displayName: string;
+  shareIndex: 1 | 2 | 3;
+  status: 'pending' | 'active' | 'revoked';
+  inviteToken?: string; // High entropy single-use delivery token (returned once upon creation)
+  inviteExpiresAt?: string | null;
+}
+
+export interface SetNomineesResponse {
+  vaultId: string;
+  nominees: NomineeItemResponse[];
+}
+
+// POST /api/invites/accept
+export interface AcceptInviteRequest {
+  inviteToken: string;
+}
+
+export interface AcceptInviteResponse {
+  nomineeId: string;
+  vaultId: string;
+  status: 'active';
+  acceptedAt: string;
+}
