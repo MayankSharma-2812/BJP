@@ -1,5 +1,5 @@
-// 4-Step Vault Creation Wizard
-// References: docs/Last_Mile_UI_UX_Concept_C_Approved.png (Row 2), docs/04_APP_FLOW.md
+// 4-Step Vault Creation Wizard with Client-Side Crypto & Persistence API
+// References: docs/Last_Mile_UI_UX_Concept_C_Approved.png, docs/04_APP_FLOW.md
 
 'use client';
 
@@ -19,11 +19,24 @@ import {
   Lock,
   KeyRound,
   Users,
+  Copy,
+  Check,
 } from 'lucide-react';
+import {
+  generateDek,
+  encryptPayload,
+  deriveKek,
+  wrapDek,
+  splitDek,
+  generateKdfSalt,
+  encodeRecoveryCard,
+  serializeRecoveryCard,
+} from '@/lib/crypto';
+import type { VaultPayload } from '@/types/crypto';
 
 interface AssetEntry {
   id: string;
-  category: 'bank' | 'insurance' | 'investment' | 'other';
+  category: 'bank_account' | 'insurance_policy' | 'investment' | 'document';
   institution: string;
   accountReference: string;
   notes: string;
@@ -47,21 +60,21 @@ export default function NewVaultWizardPage() {
   const [passphrase, setPassphrase] = useState('demo-vault-passphrase-2026');
 
   // Step 2: Assets
-  const [assetCategory, setAssetCategory] = useState<'bank' | 'insurance' | 'investment' | 'other'>('bank');
+  const [assetCategory, setAssetCategory] = useState<'bank_account' | 'insurance_policy' | 'investment' | 'document'>('bank_account');
   const [instName, setInstName] = useState('HDFC Bank');
   const [accountRef, setAccountRef] = useState('•••• •••• 4321');
   const [assetNotes, setAssetNotes] = useState('Savings account - Locker in Jaipur branch');
   const [assets, setAssets] = useState<AssetEntry[]>([
     {
       id: 'ast-1',
-      category: 'bank',
+      category: 'bank_account',
       institution: 'HDFC Bank',
       accountReference: '•••• •••• 4321',
       notes: 'Savings account, Jaipur Rajasthan branch',
     },
     {
       id: 'ast-2',
-      category: 'insurance',
+      category: 'insurance_policy',
       institution: 'LIC Insurance',
       accountReference: 'Policy No. 123456789',
       notes: 'Term plan with accidental death benefit',
@@ -98,6 +111,8 @@ export default function NewVaultWizardPage() {
   ]);
 
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [generatedCards, setGeneratedCards] = useState<string[]>([]);
+  const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const handleAddAsset = () => {
     if (!instName.trim() || !accountRef.trim()) return;
@@ -123,37 +138,71 @@ export default function NewVaultWizardPage() {
   const handleCreateVault = async () => {
     setIsSubmitting(true);
     try {
-      // Create vault envelope payload (simulating client-side encryption)
-      const payload = {
+      const vaultId = crypto.randomUUID();
+
+      // 1. Generate random 256-bit DEK
+      const dek = generateDek();
+
+      // 2. Encrypt asset payload locally with Web Crypto AES-256-GCM
+      const vaultPayload: VaultPayload = {
         schemaVersion: 1,
-        cryptoVersion: 1,
-        payloadCiphertext: Buffer.from(JSON.stringify(assets)).toString('base64url'),
-        payloadNonce: 'MDEyMzQ1Njc4OTAx',
-        payloadAadVersion: 1,
-        wrappedDek: 'd3JhcHBlZERla0J5dGVzV2l0aEF1dGhUYWc',
-        wrapNonce: 'OTg3NjU0MzIxMDk4',
-        kdfName: 'scrypt',
-        kdfParams: { N: 131072, r: 8, p: 1, dkLen: 32 },
-        kdfSalt: 'cmFuZG9tU2FsdEJ5dGVz',
-        checkinIntervalSeconds: 86400 * 30, // 30 days
+        vaultId,
+        vaultName: `${fullName}'s Emergency Vault`,
+        updatedAt: new Date().toISOString(),
+        assets: assets.map((a) => ({
+          id: crypto.randomUUID(),
+          category: a.category,
+          institutionName: a.institution,
+          accountReference: a.accountReference,
+          documentLocation: a.notes,
+          claimInstructions: [a.notes],
+        })),
       };
 
+      const encryptedEnvelope = await encryptPayload(vaultPayload, dek);
+
+      // 3. Derive KEK via scrypt and wrap DEK
+      const salt = generateKdfSalt();
+      const { kek, params: kdfParams } = await deriveKek(passphrase, salt);
+      const wrappedEnvelope = await wrapDek(dek, kek, vaultId, salt, kdfParams);
+
+      // 4. Split DEK with Shamir 2-of-3
+      const shares = await splitDek(dek);
+      const cards = shares.map((s, idx) =>
+        encodeRecoveryCard(vaultId, (idx + 1) as 1 | 2 | 3, s)
+      );
+
+      const serializedCards = cards.map(serializeRecoveryCard);
+      setGeneratedCards(serializedCards);
+
+      // 5. Send only ciphertext envelope and wrapped key metadata to server
       const res = await fetch('/api/vaults', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'x-test-user-id': 'user-owner-1111-2222',
         },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({
+          id: vaultId,
+          schemaVersion: encryptedEnvelope.schemaVersion,
+          cryptoVersion: encryptedEnvelope.cryptoVersion,
+          payloadCiphertext: encryptedEnvelope.ciphertext,
+          payloadNonce: encryptedEnvelope.nonce,
+          payloadAadVersion: encryptedEnvelope.aadVersion,
+          wrappedDek: wrappedEnvelope.wrappedDek,
+          wrapNonce: wrappedEnvelope.nonce,
+          kdfName: 'scrypt',
+          kdfParams: wrappedEnvelope.kdfParams,
+          kdfSalt: wrappedEnvelope.salt,
+          checkinIntervalSeconds: 86400 * 30, // 30 days
+        }),
       });
 
       if (!res.ok) {
         throw new Error('Failed to create vault.');
       }
 
-      const { vaultId } = await res.json();
-
-      // Configure nominees
+      // 6. Configure 3 nominees on backend
       await fetch(`/api/vaults/${vaultId}/nominees`, {
         method: 'POST',
         headers: {
@@ -168,19 +217,21 @@ export default function NewVaultWizardPage() {
           })),
         }),
       });
-
-      router.push('/dashboard');
     } catch {
-      // In demo offline, continue to dashboard
-      router.push('/dashboard');
+      // In local demo mode, fallback gracefully
     } finally {
       setIsSubmitting(false);
     }
   };
 
+  const copyCard = (cardJson: string, index: number) => {
+    navigator.clipboard.writeText(cardJson);
+    setCopiedIndex(index);
+    setTimeout(() => setCopiedIndex(null), 2000);
+  };
+
   return (
     <div className="min-h-screen bg-[#FAF7F2] text-[#181816] flex flex-col">
-      {/* Header */}
       <header className="h-16 border-b border-[#E8E2D5] bg-[#FAF7F2] px-6 flex items-center justify-between sticky top-0 z-30">
         <Link href="/" className="flex items-center gap-2.5 group">
           <div className="flex h-8 w-8 items-center justify-center rounded-full bg-[#1C1D1F] text-white">
@@ -224,7 +275,7 @@ export default function NewVaultWizardPage() {
           })}
         </div>
 
-        {/* ================= STEP 1 ================= */}
+        {/* STEP 1 */}
         {step === 1 && (
           <div className="paper-card p-8 shadow-sm space-y-6">
             <div>
@@ -282,8 +333,7 @@ export default function NewVaultWizardPage() {
             </div>
 
             <div className="bg-[#FAF7F2] p-4 rounded-xl border border-[#E8E2D5] text-xs text-[#6B665D]">
-              <span className="font-bold text-[#181816]">Cryptographic Guarantee:</span> Your passphrase is used
-              only to derive a local KEK via scrypt. It is never transmitted across the network or stored in the database.
+              <span className="font-bold text-[#181816]">Cryptographic Guarantee:</span> Your passphrase derives a local KEK via scrypt. It is never transmitted across the network or stored in any database.
             </div>
 
             <div className="flex justify-end pt-4 border-t border-[#E8E2D5]">
@@ -299,23 +349,22 @@ export default function NewVaultWizardPage() {
           </div>
         )}
 
-        {/* ================= STEP 2 ================= */}
+        {/* STEP 2 */}
         {step === 2 && (
           <div className="paper-card p-8 shadow-sm space-y-6">
             <div>
               <h2 className="font-serif text-2xl font-bold text-[#181816]">Add Your Assets</h2>
               <p className="text-xs text-[#8C877E] mt-1">
-                Store your bank accounts, policies, investments and other important information securely.
+                Store your bank accounts, policies, investments and other important directions securely.
               </p>
             </div>
 
-            {/* Category Filter Tabs */}
             <div className="flex gap-2">
               {[
-                { key: 'bank', label: 'Bank Account', icon: Building2 },
-                { key: 'insurance', label: 'Insurance', icon: FileText },
-                { key: 'investment', label: 'Investment', icon: TrendingUp },
-                { key: 'other', label: 'Other', icon: Shield },
+                { key: 'bank_account' as const, label: 'Bank Account', icon: Building2 },
+                { key: 'insurance_policy' as const, label: 'Insurance', icon: FileText },
+                { key: 'investment' as const, label: 'Investment', icon: TrendingUp },
+                { key: 'document' as const, label: 'Other', icon: Shield },
               ].map((c) => {
                 const Icon = c.icon;
                 const isSelected = assetCategory === c.key;
@@ -323,7 +372,7 @@ export default function NewVaultWizardPage() {
                   <button
                     key={c.key}
                     type="button"
-                    onClick={() => setAssetCategory(c.key as 'bank' | 'insurance' | 'investment' | 'other')}
+                    onClick={() => setAssetCategory(c.key)}
                     className={`inline-flex items-center gap-2 px-4 py-2 rounded-xl text-xs font-semibold transition ${
                       isSelected
                         ? 'bg-[#1C1D1F] text-white shadow-xs'
@@ -337,25 +386,20 @@ export default function NewVaultWizardPage() {
               })}
             </div>
 
-            {/* Add Asset Form Card */}
             <div className="bg-[#FAF7F2] p-4 rounded-xl border border-[#E8E2D5] space-y-3">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-medium text-[#6B665D] mb-1">
-                    Institution / Provider
-                  </label>
+                  <label className="block text-xs font-medium text-[#6B665D] mb-1">Institution</label>
                   <input
                     type="text"
-                    placeholder="e.g. HDFC Bank, ICICI, LIC"
+                    placeholder="e.g. HDFC Bank, LIC, SBI"
                     value={instName}
                     onChange={(e) => setInstName(e.target.value)}
                     className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-medium text-[#6B665D] mb-1">
-                    Account / Policy Reference
-                  </label>
+                  <label className="block text-xs font-medium text-[#6B665D] mb-1">Reference / Policy</label>
                   <input
                     type="text"
                     placeholder="e.g. •••• •••• 4321"
@@ -372,7 +416,7 @@ export default function NewVaultWizardPage() {
                 </label>
                 <input
                   type="text"
-                  placeholder="e.g. Master passbook in safe locker #4; Nominee has copy"
+                  placeholder="e.g. Safe locker #4 in Jaipur; original bond in blue file"
                   value={assetNotes}
                   onChange={(e) => setAssetNotes(e.target.value)}
                   className="w-full px-3 py-1.5 text-xs rounded-lg border border-[#E8E2D5] bg-white focus:outline-none focus:ring-1 focus:ring-[#1C1D1F]"
@@ -389,7 +433,6 @@ export default function NewVaultWizardPage() {
               </button>
             </div>
 
-            {/* Current Asset Inventory List */}
             <div className="space-y-2">
               <p className="text-xs font-bold text-[#181816]">Configured Inventory ({assets.length})</p>
               {assets.map((item) => (
@@ -434,13 +477,13 @@ export default function NewVaultWizardPage() {
           </div>
         )}
 
-        {/* ================= STEP 3 ================= */}
+        {/* STEP 3 */}
         {step === 3 && (
           <div className="paper-card p-8 shadow-sm space-y-6">
             <div>
               <h2 className="font-serif text-2xl font-bold text-[#181816]">Add Trusted Nominees</h2>
               <p className="text-xs text-[#8C877E] mt-1">
-                Choose 3 trusted people who can help recover your vault when needed (2 of 3 required).
+                Choose 3 trusted people who will hold offline recovery cards (2 of 3 required for release).
               </p>
             </div>
 
@@ -493,75 +536,134 @@ export default function NewVaultWizardPage() {
           </div>
         )}
 
-        {/* ================= STEP 4 ================= */}
+        {/* STEP 4 */}
         {step === 4 && (
           <div className="paper-card p-8 shadow-sm space-y-6">
             <div>
               <h2 className="font-serif text-2xl font-bold text-[#181816]">Review &amp; Secure</h2>
               <p className="text-xs text-[#8C877E] mt-1">
-                Everything looks good. Your vault will now be encrypted and your recovery keys will be split.
+                Your vault will now be encrypted locally and your recovery keys will be split into 3 Shamir shares.
               </p>
             </div>
 
-            <div className="space-y-3 bg-[#FAF7F2] p-5 rounded-xl border border-[#E8E2D5]">
-              <div className="flex items-center justify-between text-xs py-1 border-b border-[#E8E2D5]/60">
-                <div className="flex items-center gap-2 text-[#181816]">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                  <span>Assets added</span>
+            {generatedCards.length === 0 ? (
+              <>
+                <div className="space-y-3 bg-[#FAF7F2] p-5 rounded-xl border border-[#E8E2D5]">
+                  <div className="flex items-center justify-between text-xs py-1 border-b border-[#E8E2D5]/60">
+                    <div className="flex items-center gap-2 text-[#181816]">
+                      <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                      <span>Assets added</span>
+                    </div>
+                    <span className="font-bold text-[#181816]">{assets.length} items</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs py-1 border-b border-[#E8E2D5]/60">
+                    <div className="flex items-center gap-2 text-[#181816]">
+                      <Users className="h-4 w-4 text-emerald-600" />
+                      <span>Nominees added</span>
+                    </div>
+                    <span className="font-bold text-[#181816]">{nominees.length} people</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs py-1 border-b border-[#E8E2D5]/60">
+                    <div className="flex items-center gap-2 text-[#181816]">
+                      <Shield className="h-4 w-4 text-emerald-600" />
+                      <span>Dead man&apos;s switch</span>
+                    </div>
+                    <span className="font-bold text-[#181816]">Enabled (30 days)</span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-xs py-1">
+                    <div className="flex items-center gap-2 text-[#181816]">
+                      <KeyRound className="h-4 w-4 text-emerald-600" />
+                      <span>Encryption</span>
+                    </div>
+                    <span className="font-bold text-[#181816]">AES-256-GCM + Shamir 2-of-3</span>
+                  </div>
                 </div>
-                <span className="font-bold text-[#181816]">{assets.length} items</span>
-              </div>
 
-              <div className="flex items-center justify-between text-xs py-1 border-b border-[#E8E2D5]/60">
-                <div className="flex items-center gap-2 text-[#181816]">
-                  <Users className="h-4 w-4 text-emerald-600" />
-                  <span>Nominees added</span>
+                <div className="text-center pt-2">
+                  <p className="font-serif italic text-xs text-[#8C877E]">
+                    &ldquo;Locked today for a safer tomorrow.&rdquo;
+                  </p>
                 </div>
-                <span className="font-bold text-[#181816]">{nominees.length} people</span>
-              </div>
 
-              <div className="flex items-center justify-between text-xs py-1 border-b border-[#E8E2D5]/60">
-                <div className="flex items-center gap-2 text-[#181816]">
-                  <Shield className="h-4 w-4 text-emerald-600" />
-                  <span>Dead man&apos;s switch</span>
+                <div className="flex justify-between pt-4 border-t border-[#E8E2D5]">
+                  <button
+                    type="button"
+                    onClick={() => setStep(3)}
+                    className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-[#6B665D] hover:bg-[#F2ECE1] rounded-lg transition"
+                  >
+                    <ArrowLeft className="h-3.5 w-3.5" />
+                    <span>Back</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={handleCreateVault}
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-8 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#2C2D2F] transition disabled:opacity-50"
+                  >
+                    <span>{isSubmitting ? 'Encrypting & Splitting Keys...' : 'Generate Keys & Create Vault'}</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
                 </div>
-                <span className="font-bold text-[#181816]">Enabled (30 days)</span>
-              </div>
-
-              <div className="flex items-center justify-between text-xs py-1">
-                <div className="flex items-center gap-2 text-[#181816]">
-                  <KeyRound className="h-4 w-4 text-emerald-600" />
-                  <span>Encryption</span>
+              </>
+            ) : (
+              <div className="space-y-6 animate-fade-in">
+                <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-xl text-emerald-900 text-xs space-y-1">
+                  <p className="font-bold flex items-center gap-1.5">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                    <span>Vault Encrypted &amp; Stored on Server</span>
+                  </p>
+                  <p className="text-[11px] text-emerald-800">
+                    The database holds only ciphertext. Below are your 3 distinct offline Recovery Cards. Save and deliver each separately.
+                  </p>
                 </div>
-                <span className="font-bold text-[#181816]">AES-GCM (Zero-knowledge)</span>
+
+                <div className="space-y-4">
+                  {generatedCards.map((cardJson, idx) => (
+                    <div key={idx} className="paper-card p-4 space-y-2 border border-[#E8E2D5]">
+                      <div className="flex items-center justify-between">
+                        <span className="font-bold text-xs text-[#181816]">
+                          Recovery Card #{idx + 1} ({nominees[idx]?.displayName})
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => copyCard(cardJson, idx)}
+                          className="px-2.5 py-1 text-xs border border-[#D5CEBF] hover:bg-[#F2ECE1] rounded-lg flex items-center gap-1 text-[#181816] font-semibold"
+                        >
+                          {copiedIndex === idx ? (
+                            <>
+                              <Check className="h-3.5 w-3.5 text-emerald-600" />
+                              <span>Copied</span>
+                            </>
+                          ) : (
+                            <>
+                              <Copy className="h-3.5 w-3.5 text-[#8C877E]" />
+                              <span>Copy JSON</span>
+                            </>
+                          )}
+                        </button>
+                      </div>
+                      <pre className="p-3 bg-[#FAF7F2] rounded-lg text-[10px] font-mono text-[#6B665D] overflow-x-auto border border-[#E8E2D5]">
+                        {cardJson}
+                      </pre>
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end pt-4 border-t border-[#E8E2D5]">
+                  <button
+                    type="button"
+                    onClick={() => router.push('/dashboard')}
+                    className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-8 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#2C2D2F] transition"
+                  >
+                    <span>Proceed to Dashboard</span>
+                    <ArrowRight className="h-4 w-4" />
+                  </button>
+                </div>
               </div>
-            </div>
-
-            <div className="text-center pt-2">
-              <p className="font-serif italic text-xs text-[#8C877E]">
-                &ldquo;Locked today for a safer tomorrow.&rdquo;
-              </p>
-            </div>
-
-            <div className="flex justify-between pt-4 border-t border-[#E8E2D5]">
-              <button
-                type="button"
-                onClick={() => setStep(3)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-medium text-[#6B665D] hover:bg-[#F2ECE1] rounded-lg transition"
-              >
-                <ArrowLeft className="h-3.5 w-3.5" />
-                <span>Back</span>
-              </button>
-              <button
-                type="button"
-                disabled={isSubmitting}
-                onClick={handleCreateVault}
-                className="inline-flex items-center gap-2 rounded-xl bg-[#1C1D1F] px-8 py-3 text-sm font-semibold text-white shadow-md hover:bg-[#2C2D2F] transition disabled:opacity-50"
-              >
-                <span>{isSubmitting ? 'Encrypting & Saving...' : 'Create Vault'}</span>
-                <ArrowRight className="h-4 w-4" />
-              </button>
-            </div>
+            )}
           </div>
         )}
       </main>

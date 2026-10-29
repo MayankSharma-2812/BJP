@@ -77,6 +77,14 @@ export function validateCreateVaultRequest(body: unknown): CreateVaultRequest {
   assertZeroPlaintext(body);
   const data = body as Partial<CreateVaultRequest>;
 
+  let id: string | undefined;
+  if (data.id !== undefined) {
+    if (typeof data.id !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(data.id)) {
+      throw new ValidationError('Invalid vault id format.');
+    }
+    id = data.id;
+  }
+
   if (typeof data.schemaVersion !== 'number' || data.schemaVersion <= 0) {
     throw new ValidationError('Invalid or missing schemaVersion.');
   }
@@ -126,6 +134,7 @@ export function validateCreateVaultRequest(body: unknown): CreateVaultRequest {
   }
 
   return {
+    ...(id ? { id } : {}),
     schemaVersion: data.schemaVersion,
     cryptoVersion: data.cryptoVersion,
     payloadCiphertext,
