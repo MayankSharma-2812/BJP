@@ -3,6 +3,7 @@
 
 import { NextRequest } from 'next/server';
 import { createClient } from '@supabase/supabase-js';
+import { normalizeSupabaseUrl } from '@/lib/server/db';
 
 export interface AuthenticatedUser {
   id: string;
@@ -10,7 +11,8 @@ export interface AuthenticatedUser {
   role: 'authenticated';
 }
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const rawSupabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+const supabaseUrl = normalizeSupabaseUrl(rawSupabaseUrl);
 const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
 export async function getAuthenticatedUser(request: NextRequest): Promise<AuthenticatedUser | null> {

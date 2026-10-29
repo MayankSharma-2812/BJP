@@ -1,13 +1,7 @@
--- Last Mile - Initial Database Schema Migration
--- Workstream B: Data Foundation & Authorization (Shyam)
--- References: docs/05_BACKEND_SCHEMA.md, docs/07_SECURITY_THREAT_MODEL.md
 
--- Enable necessary extensions
 CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
 
--- ============================================================================
--- 1. PROFILES TABLE
--- ============================================================================
+
 CREATE TABLE IF NOT EXISTS public.profiles (
     user_id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
     display_name TEXT CHECK (char_length(display_name) <= 100),
@@ -16,10 +10,7 @@ CREATE TABLE IF NOT EXISTS public.profiles (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now())
 );
 
--- ============================================================================
--- 2. VAULTS TABLE
--- ============================================================================
--- No plaintext assets, passphrases, raw DEKs, or shares may be stored in this table.
+
 CREATE TABLE IF NOT EXISTS public.vaults (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     owner_id UUID NOT NULL REFERENCES public.profiles(user_id) ON DELETE CASCADE,
@@ -67,10 +58,7 @@ CREATE TABLE IF NOT EXISTS public.vaults (
 CREATE INDEX IF NOT EXISTS idx_vaults_owner_id ON public.vaults(owner_id);
 CREATE INDEX IF NOT EXISTS idx_vaults_status ON public.vaults(status);
 
--- ============================================================================
--- 3. NOMINEES TABLE
--- ============================================================================
--- Never store recovery share bytes or share checksums here.
+
 CREATE TABLE IF NOT EXISTS public.nominees (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     vault_id UUID NOT NULL REFERENCES public.vaults(id) ON DELETE CASCADE,
@@ -354,3 +342,25 @@ CREATE TRIGGER on_vaults_updated
 CREATE TRIGGER on_nominees_updated
     BEFORE UPDATE ON public.nominees
     FOR EACH ROW EXECUTE FUNCTION public.handle_updated_at();
+
+
+-- ----------------------------------------------------------------------------
+-- Automatic Profile Creation on User Signup
+-- ----------------------------------------------------------------------------
+CREATE OR REPLACE FUNCTION public.handle_new_user()
+RETURNS TRIGGER AS $$
+BEGIN
+    INSERT INTO public.profiles (user_id, display_name, locale)
+    VALUES (
+        NEW.id,
+        COALESCE(NEW.raw_user_meta_data->>'full_name', NEW.raw_user_meta_data->>'name', NEW.email),
+        'en'
+    )
+    ON CONFLICT (user_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
+
+CREATE OR REPLACE TRIGGER on_auth_user_created
+    AFTER INSERT ON auth.users
+    FOR EACH ROW EXECUTE FUNCTION public.handle_new_user();

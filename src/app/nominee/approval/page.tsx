@@ -24,7 +24,7 @@ export default function NomineeApprovalPage() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-user-id': '22222222-2222-4222-8222-222222222222',
+          'x-test-user-id': '55555555-5555-4555-8555-555555555555',
         },
         body: JSON.stringify({
           decision: type === 'approved' ? 'approve' : 'decline',

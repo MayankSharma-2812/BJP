@@ -124,6 +124,7 @@ export default function NewVaultWizardPage() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [generatedCards, setGeneratedCards] = useState<string[]>([]);
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
   const validateStep1 = () => {
     const errors: { fullName?: string; email?: string; passphrase?: string } = {};
@@ -191,6 +192,7 @@ export default function NewVaultWizardPage() {
 
   const handleCreateVault = async () => {
     setIsSubmitting(true);
+    setSubmitError(null);
     try {
       const vaultId = crypto.randomUUID();
 
@@ -227,14 +229,13 @@ export default function NewVaultWizardPage() {
       );
 
       const serializedCards = cards.map(serializeRecoveryCard);
-      setGeneratedCards(serializedCards);
 
       // 5. Send only ciphertext envelope and wrapped key metadata to server
       const res = await fetch('/api/vaults', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-user-id': 'user-owner-1111-2222',
+          'x-test-user-id': '8f206d7a-3ff3-495d-a775-0208b8ad57d0',
         },
         body: JSON.stringify({
           id: vaultId,
@@ -253,15 +254,20 @@ export default function NewVaultWizardPage() {
       });
 
       if (!res.ok) {
-        throw new Error('Failed to create vault.');
+        const errJson = await res.json().catch(() => null);
+        throw new Error(errJson?.error?.message || `Server returned ${res.status}: Failed to persist vault.`);
+      }
+
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('last_created_vault_id', vaultId);
       }
 
       // 6. Configure 3 nominees on backend
-      await fetch(`/api/vaults/${vaultId}/nominees`, {
+      const nomRes = await fetch(`/api/vaults/${vaultId}/nominees`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-test-user-id': 'user-owner-1111-2222',
+          'x-test-user-id': '8f206d7a-3ff3-495d-a775-0208b8ad57d0',
         },
         body: JSON.stringify({
           nominees: nominees.map((n) => ({
@@ -271,8 +277,16 @@ export default function NewVaultWizardPage() {
           })),
         }),
       });
-    } catch {
-      // In local demo mode, fallback gracefully
+
+      if (!nomRes.ok) {
+        const nomErrJson = await nomRes.json().catch(() => null);
+        console.warn('Nominee configuration warning:', nomErrJson);
+      }
+
+      setGeneratedCards(serializedCards);
+    } catch (err) {
+      console.error('Vault creation failed:', err);
+      setSubmitError(err instanceof Error ? err.message : 'Failed to create vault.');
     } finally {
       setIsSubmitting(false);
     }
@@ -729,6 +743,13 @@ export default function NewVaultWizardPage() {
                     &ldquo;Locked today for a safer tomorrow.&rdquo;
                   </p>
                 </div>
+
+                {submitError && (
+                  <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-red-700 text-xs flex items-center gap-2">
+                    <AlertCircle className="h-4 w-4 shrink-0 text-red-600" />
+                    <span>{submitError}</span>
+                  </div>
+                )}
 
                 <div className="flex justify-between pt-4 border-t border-[#E8E2D5]">
                   <button

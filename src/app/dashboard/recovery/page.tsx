@@ -28,7 +28,7 @@ export default function RecoveryCenterPage() {
       await fetch('/api/recovery-requests/req-primary/cancel', {
         method: 'POST',
         headers: {
-          'x-test-user-id': '11111111-1111-4111-8111-111111111111',
+          'x-test-user-id': '8f206d7a-3ff3-495d-a775-0208b8ad57d0',
         },
       });
     } catch {

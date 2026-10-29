@@ -23,15 +23,22 @@ export default function CheckinPage() {
   const handleCheckin = async () => {
     setLoading(true);
     try {
-      const res = await fetch('/api/vaults/vlt-primary/check-in', {
+      const storedVaultId =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('last_created_vault_id')
+          : null;
+      const targetVaultId = storedVaultId || '44444444-4444-4444-8444-444444444444';
+
+      const res = await fetch(`/api/vaults/${targetVaultId}/check-in`, {
         method: 'POST',
         headers: {
-          'x-test-user-id': '11111111-1111-4111-8111-111111111111',
+          'x-test-user-id': '8f206d7a-3ff3-495d-a775-0208b8ad57d0',
         },
       });
 
       if (res.ok) {
-        const data = await res.json();
+        const json = await res.json();
+        const data = json.data || json;
         const last = new Date(data.lastCheckInAt);
         const next = new Date(data.nextCheckInAt);
         setLastCheckin(last.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' }));
