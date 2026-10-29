@@ -101,6 +101,8 @@ export const DemoClockActionSchema = z.enum([
   'reset_demo',
 ]);
 
+export type DemoClockAction = z.infer<typeof DemoClockActionSchema>;
+
 export const DemoClockRequestSchema = z.object({
   action: DemoClockActionSchema,
   seconds: z.number().int().positive().optional(),
