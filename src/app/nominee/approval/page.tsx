@@ -20,7 +20,12 @@ export default function NomineeApprovalPage() {
   const handleDecision = async (type: 'approved' | 'declined') => {
     setLoading(true);
     try {
-      await fetch('/api/recovery-requests/req-primary/decision', {
+      const activeReqId =
+        typeof window !== 'undefined'
+          ? localStorage.getItem('last_mile_active_recovery_req') || 'req-primary'
+          : 'req-primary';
+
+      await fetch(`/api/recovery-requests/${activeReqId}/decision`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

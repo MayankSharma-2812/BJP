@@ -116,6 +116,13 @@ describe('Data Persistence Endpoints (Workstream B)', () => {
     const updateJson = await updateRes.json();
     expect(updateJson.revision).toBe(2);
 
+    // Verify audit event has canonical 64-char hex hashes
+    const updatedEvents = getMockDb().auditEvents.filter((e) => e.vault_id === vaultId);
+    const lastEvent = updatedEvents[updatedEvents.length - 1];
+    expect(lastEvent.event_type).toBe('payload_updated');
+    expect(lastEvent.event_hash).toMatch(/^[a-f0-9]{64}$/i);
+    expect(lastEvent.previous_hash).toMatch(/^[a-f0-9]{64}$/i);
+
     // 3. Conflict update with stale revision: 1 (expect 409 REVISION_CONFLICT)
     const staleReq = makeRequest(
       `/api/vaults/${vaultId}/envelope`,
@@ -169,6 +176,11 @@ describe('Data Persistence Endpoints (Workstream B)', () => {
     const acceptJson = await acceptRes.json();
     expect(acceptJson.status).toBe('active');
     expect(acceptJson.vaultId).toBe(vaultId);
+
+    // Verify audit events emitted for nominee_added and invite_accepted
+    const events = getMockDb().auditEvents.filter((e) => e.vault_id === vaultId);
+    expect(events.some((e) => e.event_type === 'nominee_added')).toBe(true);
+    expect(events.some((e) => e.event_type === 'invite_accepted')).toBe(true);
 
     // 4. Reusing or invalid token fails with 400 INVITE_INVALID_OR_EXPIRED
     const reuseReq = makeRequest(

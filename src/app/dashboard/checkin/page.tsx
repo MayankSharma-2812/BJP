@@ -22,8 +22,13 @@ export default function CheckinPage() {
 
   const handleCheckin = async () => {
     setLoading(true);
+    const vaultId =
+      typeof window !== 'undefined'
+        ? localStorage.getItem('last_mile_active_vault') || 'vlt-primary'
+        : 'vlt-primary';
+
     try {
-      const res = await fetch('/api/vaults/vlt-primary/check-in', {
+      const res = await fetch(`/api/vaults/${vaultId}/check-in`, {
         method: 'POST',
         headers: {
           'x-test-user-id': '11111111-1111-4111-8111-111111111111',
