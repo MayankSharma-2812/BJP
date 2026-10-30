@@ -127,6 +127,7 @@ npm run build
 
 ## 📖 Deep-Dive Engineering Documentation
 
+- **[Technology Research & Architectural Decisions](docs/TECH_STACK_RESEARCH.md):** Evidence-based architectural decision records (ADR), comparative tech stack analysis, and security boundary evaluation.
 - **[System Architecture & Technical Specification](docs/ARCHITECTURE.md):** Complete cryptographic design specification, mathematical proofs, threat model, tech stack trade-offs, and failure mode analysis.
 - **[Live Demo Runbook & Rehearsal Script](docs/DEMO_WALKTHROUGH.md):** Rehearsal script with talking points, curl commands, and expected outputs for live hackathon presentations.
 
